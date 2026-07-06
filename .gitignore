@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# CatBoost training logs
+catboost_info/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env files (secrets)
+.env
+*.env
+!*.env.example
+
+# Node
+node_modules/
+.npm/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Prisma generated
+backend/node_modules/

@@ -3,76 +3,122 @@
 Run:
     python train.py
 
-Inputs:
-    PhysioNet 2019 Sepsis Challenge CSVs at ~/Downloads/22687585/
-
 Outputs:
-    artifacts/deterioration_model.pkl
+    artifacts/model.cbm
+    artifacts/features.json
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from catboost import CatBoostClassifier, Pool
+from sklearn.metrics import (
+    classification_report,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
-import xgboost as xgb
-import shap
-import joblib
 
-PHYSIONET_DIR = Path.home() / "Downloads" / "22687585"
+import data_loader
+import feature_engineering as fe
+from feature_engineering import FEATURE_COLS, TARGET_COL
+
 ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
-
-# PhysioNet 2019 vital feature columns
-FEATURE_COLS = [
-    "HR", "O2Sat", "Temp", "SBP", "MAP", "DBP", "Resp",
-    "BaseExcess", "HCO3", "FiO2", "pH", "PaCO2", "SaO2",
-    "Glucose", "Lactate", "WBC", "Creatinine", "Bilirubin_total",
-]
-TARGET_COL = "SepsisLabel"
-
-
-def load_physionet() -> pd.DataFrame:
-    """Load and concatenate all PhysioNet PSV files."""
-    files = list(PHYSIONET_DIR.rglob("*.psv"))
-    if not files:
-        raise FileNotFoundError(f"No PSV files found in {PHYSIONET_DIR}")
-    dfs = [pd.read_csv(f, sep="|") for f in files[:500]]  # subset for dev
-    return pd.concat(dfs, ignore_index=True)
+ALERT_THRESHOLD = 0.65
 
 
 def train() -> None:
-    df = load_physionet()
-    available = [c for c in FEATURE_COLS if c in df.columns]
-    X = df[available].fillna(df[available].median()).values
-    y = df[TARGET_COL].values
+    # ── Load & engineer features ──────────────────────────────────────────
+    raw = data_loader.load()
+    df  = fe.build(raw)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+    # ── Patient-level train/test split ────────────────────────────────────
+    all_patients = df["Patient_ID"].unique()
+    train_pids, test_pids = train_test_split(
+        all_patients, test_size=0.20, random_state=42
     )
 
-    model = xgb.XGBClassifier(
-        n_estimators=300,
-        max_depth=7,
-        learning_rate=0.05,
-        scale_pos_weight=(y_train == 0).sum() / (y_train == 1).sum(),
-        eval_metric="aucpr",
-        random_state=42,
+    # Guard: confirm no patient appears in both sets
+    overlap = set(train_pids) & set(test_pids)
+    assert len(overlap) == 0, f"Patient leakage detected: {len(overlap)} shared patients"
+    print(f"\nPatient-level split — train: {len(train_pids):,}, test: {len(test_pids):,}")
+    print("Patient leakage check: PASSED ✓")
+
+    train_mask = df["Patient_ID"].isin(train_pids)
+    test_mask  = df["Patient_ID"].isin(test_pids)
+
+    X_train, y_train = fe.get_feature_matrix(df[train_mask])
+    X_test,  y_test  = fe.get_feature_matrix(df[test_mask])
+
+    print(f"Train rows: {len(X_train):,}  |  Test rows: {len(X_test):,}")
+    print(f"Train sepsis rate: {y_train.mean():.3%}")
+    print(f"Test  sepsis rate: {y_test.mean():.3%}\n")
+
+    # Class imbalance weight
+    neg = (y_train == 0).sum()
+    pos = (y_train == 1).sum()
+    scale_pos_weight = float(neg / max(pos, 1))
+    print(f"scale_pos_weight = {scale_pos_weight:.1f}")
+
+    # ── Train CatBoost ────────────────────────────────────────────────────
+    train_pool = Pool(X_train.values, y_train.values, feature_names=FEATURE_COLS)
+    eval_pool  = Pool(X_test.values,  y_test.values,  feature_names=FEATURE_COLS)
+
+    model = CatBoostClassifier(
+        iterations=500,
+        depth=8,
+        learning_rate=0.08,
+        loss_function="Logloss",
+        scale_pos_weight=scale_pos_weight,
+        eval_metric="AUC",
+        od_type="Iter",
+        od_wait=40,
+        random_seed=42,
+        verbose=50,
     )
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    model.fit(train_pool, eval_set=eval_pool)
 
-    auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-    print(f"ROC-AUC on test set: {auc:.4f}")
+    # ── Evaluation ────────────────────────────────────────────────────────
+    y_proba = model.predict_proba(X_test.values)[:, 1]
+    auroc   = roc_auc_score(y_test, y_proba)
+    y_pred  = (y_proba >= ALERT_THRESHOLD).astype(int)
+    prec, rec, f1, _ = precision_recall_fscore_support(y_test, y_pred, average="binary", zero_division=0)
 
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_test[:100])
-    print(f"SHAP values shape: {np.array(shap_values).shape}")
+    print(f"\n{'='*50}")
+    print(f"AUROC on test set:  {auroc:.4f}")
+    print(f"Precision @ {ALERT_THRESHOLD}:   {prec:.4f}")
+    print(f"Recall    @ {ALERT_THRESHOLD}:   {rec:.4f}")
+    print(f"F1        @ {ALERT_THRESHOLD}:   {f1:.4f}")
+    print(classification_report(y_test, y_pred, target_names=["no_sepsis", "sepsis"]))
 
+    if auroc < 0.77:
+        print(f"WARNING: AUROC {auroc:.4f} below target 0.77")
+    else:
+        print(f"PASS: AUROC {auroc:.4f} ≥ 0.77 ✓")
+
+    # ── Save artifacts ────────────────────────────────────────────────────
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, ARTIFACTS_DIR / "deterioration_model.pkl")
-    joblib.dump(available, ARTIFACTS_DIR / "feature_cols.pkl")
-    print(f"Artifacts saved → {ARTIFACTS_DIR}")
+    model_path = ARTIFACTS_DIR / "model.cbm"
+    model.save_model(str(model_path))
+    print(f"Model saved → {model_path}")
+
+    # Global medians from training data for inference imputation
+    medians = {col: float(X_train[col].median()) for col in FEATURE_COLS}
+
+    features_meta = {
+        "feature_cols":     FEATURE_COLS,
+        "medians":          medians,
+        "alert_threshold":  ALERT_THRESHOLD,
+        "auroc":            round(auroc, 4),
+        "scale_pos_weight": round(scale_pos_weight, 2),
+    }
+    features_path = ARTIFACTS_DIR / "features.json"
+    with open(features_path, "w") as f:
+        json.dump(features_meta, f, indent=2)
+    print(f"Features meta saved → {features_path}")
 
 
 if __name__ == "__main__":

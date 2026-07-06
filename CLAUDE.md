@@ -646,8 +646,8 @@ const vitals = await prisma.vital.findMany({
 ```
 Phase:      0 — Day 2 — Foundation
 Date:       [6 July, 2026]
-What is merged to main:  
-What is in progress:     Day 1 sessions
+What is merged to main:  all 3 commits to main
+What is in progress:     nothing, day 2 will start now
 Blocked by:              nothing
 ```
 
@@ -671,3 +671,4 @@ Model: [Fable 5 / Opus 4.7 / Sonnet 4.6]
 
 Do not ask clarifying questions. State your assumptions and proceed.
 ```
+
