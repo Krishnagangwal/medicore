@@ -644,9 +644,9 @@ const vitals = await prisma.vital.findMany({
 ## Current phase
 
 ```
-Phase:      0 — Day 1 — Foundation
-Date:       [today's date]
-What is merged to main:  [nothing yet]
+Phase:      0 — Day 2 — Foundation
+Date:       [6 July, 2026]
+What is merged to main:  
 What is in progress:     Day 1 sessions
 Blocked by:              nothing
 ```
