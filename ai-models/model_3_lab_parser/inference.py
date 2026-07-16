@@ -1,44 +1,60 @@
-"""Model 3 — Lab Parser inference (stubbed).
+"""Model 3 — Lab Parser inference orchestration.
 
-When a real lab_report_id is provided, the live path will:
-  1. Download the Cloudinary file
-  2. Run ocr.extract_text()
-  3. Run parser.parse_text()
-  4. Run summarizer.patient_summary() + summarizer.clinical_summary()
+parse() chains ocr.extract() -> parser.parse_text() -> summarizer.summarize().
+Never raises: any unexpected failure degrades to the same empty-result
+shape the API returns for a failed OCR pass, so the gateway can always
+count on getting back a well-formed dict.
 """
 from __future__ import annotations
 
-from typing import Any
+import ocr
+import parser
+import summarizer
+
+MODEL_VERSION = "3.0.0"
 
 
-def predict(patient_id: str, encounter_id: str, context: dict[str, Any]) -> dict:
-    """Return a mock lab-parsing result."""
+def _empty_result(ocr_status: str) -> dict:
     return {
-        "extracted_values": [
-            {
-                "test_name": "Haemoglobin",
-                "value": 9.2,
-                "unit": "g/dL",
-                "reference_range": "13.5–17.5 g/dL",
-                "is_abnormal": True,
-                "is_critical": False,
-            },
-            {
-                "test_name": "Wbc",
-                "value": 12.4,
-                "unit": "10³/µL",
-                "reference_range": "4.5–11.0 10³/µL",
-                "is_abnormal": True,
-                "is_critical": False,
-            },
-        ],
-        "abnormal_count": 2,
+        "ocr_status": ocr_status,
+        "extracted_values": [],
+        "abnormal_count": 0,
         "critical_count": 0,
-        "patient_summary": "2 values are outside the normal range: Haemoglobin, Wbc.",
-        "clinical_summary": (
-            "Extracted 2 lab value(s).\n"
-            "[Abnormal] Haemoglobin: 9.2 g/dL (ref: 13.5–17.5 g/dL)\n"
-            "[Abnormal] Wbc: 12.4 10³/µL (ref: 4.5–11.0 10³/µL)"
-        ),
-        "model_version": "3.0.0-stub",
+        "patient_summary": None,
+        "clinical_summary": None,
     }
+
+
+def parse(file_bytes: bytes, file_format: str, gender: str = "unknown") -> dict:
+    """Run the full lab-report pipeline and return the gateway-schema lab_parser.result shape."""
+    try:
+        ocr_result = ocr.extract(file_bytes, file_format)
+        confidence = ocr_result.get("confidence", 0.0) or 0.0
+        text = ocr_result.get("text") or ""
+
+        if confidence >= 0.70:
+            ocr_status = "high_confidence"
+        elif confidence >= 0.40:
+            ocr_status = "low_confidence"
+        else:
+            ocr_status = "failed"
+
+        if ocr_status == "failed" or not text.strip():
+            return _empty_result("failed" if ocr_status == "failed" else ocr_status)
+
+        values = parser.parse_text(text, gender=gender)
+        abnormal_count = sum(1 for v in values if v["flag"] != "NORMAL")
+        critical_count = sum(1 for v in values if v["flag"] in ("CRITICAL_LOW", "CRITICAL_HIGH"))
+
+        summary = summarizer.summarize(values, gender=gender)
+
+        return {
+            "ocr_status": ocr_status,
+            "extracted_values": values,
+            "abnormal_count": abnormal_count,
+            "critical_count": critical_count,
+            "patient_summary": summary.get("patient_summary"),
+            "clinical_summary": summary.get("clinical_summary"),
+        }
+    except Exception:
+        return _empty_result("failed")

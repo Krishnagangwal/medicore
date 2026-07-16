@@ -1,84 +1,127 @@
 """Lab value extraction and reference-range comparison.
 
-Uses regex to pull (test_name, value, unit) tuples from OCR text, then
-compares them against the static reference ranges defined below.
-No ML involved — purely rule-based.
+Line-by-line tokenized extraction of (test_name, value, unit, reference
+range) from raw OCR text, normalized against reference_ranges.py and
+flagged against normal/critical thresholds. No ML involved — purely
+rule-based.
+
+Tokenizing (splitting on whitespace) rather than one monolithic regex is
+what lets this tell "HbA1c" (a name token that happens to contain a
+digit) apart from "8.2" (the value token): a token is part of the name
+as long as it starts with a letter; the first token that starts with a
+digit is the value.
+
+The trailing textual flag word some reports print ("LOW"/"HIGH"/"H"/"L")
+is not relied upon — flag and severity are always computed from the
+numeric value against the reference range, which is authoritative even
+when the printed flag is missing, OCR-mangled, or absent from the format.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Optional
 
-# ---------------------------------------------------------------------------
-# Static reference ranges  (min_normal, max_normal, critical_low, critical_high)
-# Source: standard clinical reference values
-# ---------------------------------------------------------------------------
-REFERENCE_RANGES: dict[str, dict] = {
-    "haemoglobin":     {"unit": "g/dL",  "lo": 13.5, "hi": 17.5, "crit_lo": 7.0,  "crit_hi": 20.0},
-    "hemoglobin":      {"unit": "g/dL",  "lo": 13.5, "hi": 17.5, "crit_lo": 7.0,  "crit_hi": 20.0},
-    "wbc":             {"unit": "10³/µL","lo": 4.5,  "hi": 11.0, "crit_lo": 2.0,  "crit_hi": 30.0},
-    "platelets":       {"unit": "10³/µL","lo": 150,  "hi": 400,  "crit_lo": 50,   "crit_hi": 1000},
-    "glucose":         {"unit": "mg/dL", "lo": 70,   "hi": 100,  "crit_lo": 40,   "crit_hi": 500},
-    "creatinine":      {"unit": "mg/dL", "lo": 0.6,  "hi": 1.2,  "crit_lo": 0.0,  "crit_hi": 10.0},
-    "sodium":          {"unit": "mEq/L", "lo": 136,  "hi": 145,  "crit_lo": 120,  "crit_hi": 160},
-    "potassium":       {"unit": "mEq/L", "lo": 3.5,  "hi": 5.0,  "crit_lo": 2.5,  "crit_hi": 6.5},
-    "bilirubin":       {"unit": "mg/dL", "lo": 0.1,  "hi": 1.2,  "crit_lo": 0.0,  "crit_hi": 15.0},
-    "alt":             {"unit": "U/L",   "lo": 7,    "hi": 56,   "crit_lo": 0,    "crit_hi": 1000},
-    "ast":             {"unit": "U/L",   "lo": 10,   "hi": 40,   "crit_lo": 0,    "crit_hi": 1000},
-    "tsh":             {"unit": "µIU/mL","lo": 0.4,  "hi": 4.0,  "crit_lo": 0.0,  "crit_hi": 20.0},
-    "crp":             {"unit": "mg/L",  "lo": 0.0,  "hi": 10.0, "crit_lo": 0.0,  "crit_hi": 200.0},
-}
+from reference_ranges import REFERENCE_RANGES, normalize_test_name, resolve_range
 
-# Regex: captures test name, numeric value, and optional unit from a line like
-#   "Haemoglobin  9.2  g/dL"  or  "WBC: 11.5 10^3/uL"
-_LAB_PATTERN = re.compile(
-    r"([A-Za-z][A-Za-z0-9\s\-/]+?)\s*[:\-]?\s*"
-    r"([\d]+\.?[\d]*)\s*"
-    r"([A-Za-z%µ³/^0-9\-]+)?",
-    re.MULTILINE,
-)
+_VALUE_TOKEN_RE = re.compile(r"^(?P<num>\d+(?:[.,]\d+)?)(?P<suffix>.*)$")
+_RANGE_RE = re.compile(r"(?P<low>\d+(?:[.,]\d+)?)\s*(?:-|–|to)\s*(?P<high>\d+(?:[.,]\d+)?)")
+_UNIT_HINT_RE = re.compile(r"[A-Za-zµ%]")
 
 
-@dataclass
-class LabValue:
-    test_name: str
-    value: float
-    unit: str
-    reference_range: str
-    is_abnormal: bool
-    is_critical: bool
+def _to_float(raw: str) -> float:
+    return float(raw.replace(",", "."))
 
 
-def parse_text(ocr_text: str) -> list[LabValue]:
-    """Extract lab values from raw OCR text and flag abnormals."""
-    results: list[LabValue] = []
+def _compute_flag_severity(
+    value: float, low: float, high: float, critical_low: float, critical_high: float
+) -> tuple[str, str]:
+    if low <= value <= high:
+        return "NORMAL", "normal"
 
-    for match in _LAB_PATTERN.finditer(ocr_text):
-        raw_name = match.group(1).strip().lower()
+    if value <= critical_low:
+        return "CRITICAL_LOW", "critical"
+    if value >= critical_high:
+        return "CRITICAL_HIGH", "critical"
+
+    if value < low:
+        deviation = (low - value) / low if low else 1.0
+        return "LOW", "mild" if deviation < 0.20 else "moderate"
+
+    deviation = (value - high) / high if high else 1.0
+    return "HIGH", "mild" if deviation < 0.20 else "moderate"
+
+
+def _parse_line(line: str, gender: str) -> dict | None:
+    tokens = line.split()
+    if not tokens:
+        return None
+
+    i = 0
+    name_parts: list[str] = []
+    while i < len(tokens) and tokens[i][0].isalpha():
+        name_parts.append(tokens[i].strip(":-"))
+        i += 1
+    if not name_parts or i >= len(tokens):
+        return None
+
+    canonical = normalize_test_name(" ".join(name_parts))
+    if canonical is None:
+        return None
+
+    value_match = _VALUE_TOKEN_RE.match(tokens[i])
+    if not value_match:
+        return None
+    try:
+        value = _to_float(value_match.group("num"))
+    except ValueError:
+        return None
+    unit = value_match.group("suffix").strip()
+    i += 1
+
+    if not unit and i < len(tokens):
+        candidate = tokens[i]
+        stripped = candidate.strip("()[]")
+        if _UNIT_HINT_RE.search(candidate) and not _RANGE_RE.fullmatch(stripped):
+            unit = candidate
+            i += 1
+
+    defaults = resolve_range(canonical, gender)
+    unit = unit or defaults["unit"]
+
+    range_match = _RANGE_RE.search(" ".join(tokens[i:]))
+    if range_match:
         try:
-            value = float(match.group(2))
+            low = _to_float(range_match.group("low"))
+            high = _to_float(range_match.group("high"))
         except ValueError:
+            low, high = defaults["low"], defaults["high"]
+    else:
+        low, high = defaults["low"], defaults["high"]
+
+    flag, severity = _compute_flag_severity(value, low, high, defaults["critical_low"], defaults["critical_high"])
+
+    return {
+        "test": REFERENCE_RANGES[canonical]["display_name"],
+        "value": value,
+        "unit": unit,
+        "reference_low": low,
+        "reference_high": high,
+        "flag": flag,
+        "severity": severity,
+    }
+
+
+def parse_text(ocr_text: str, gender: str = "unknown") -> list[dict]:
+    """Extract lab values from raw OCR text and flag abnormals.
+
+    `gender` selects which normal range to fall back on when a line does
+    not print its own reference range ("male"/"female"/"unknown").
+    """
+    results: list[dict] = []
+    for raw_line in (ocr_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        unit = (match.group(3) or "").strip()
-
-        ref = REFERENCE_RANGES.get(raw_name)
-        if ref is None:
-            continue
-
-        is_abnormal = not (ref["lo"] <= value <= ref["hi"])
-        is_critical = value <= ref["crit_lo"] or value >= ref["crit_hi"]
-        ref_range_str = f"{ref['lo']}–{ref['hi']} {ref['unit']}"
-
-        results.append(
-            LabValue(
-                test_name=raw_name.title(),
-                value=value,
-                unit=unit or ref["unit"],
-                reference_range=ref_range_str,
-                is_abnormal=is_abnormal,
-                is_critical=is_critical,
-            )
-        )
-
+        parsed = _parse_line(line, gender)
+        if parsed is not None:
+            results.append(parsed)
     return results
