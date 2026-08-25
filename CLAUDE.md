@@ -300,23 +300,3 @@ old models removed
 In progress: Sepsis model training on PhysioNet 2019
 Blocked: MIMIC-IV credentials (applied, pending 1-3 days)
 Next: Federated learning wrapper, Qwen LLM alert, backend scaffold
-
-
----
-
-## Session start protocol
-
-Every Claude Code session starts with:
-
-Read CLAUDE.md. State the current phase and today's task before
-writing any code.
-
-Task: [one specific module]
-Files to create/modify: [explicit list]
-Acceptance criteria:
-
-[criterion 1]
-[criterion 2]
-Model: [Fable 5 / Opus 4.7 / Sonnet 4.6]
-
-Do not ask clarifying questions. State assumptions and proceed.
