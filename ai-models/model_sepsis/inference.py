@@ -39,8 +39,29 @@ _model = SepsisTransformer().to(_device)
 with open(os.path.join(_ARTIFACTS_DIR, "normalisation.json")) as f:
     _NORM = json.load(f)
 
-_model_path = os.path.join(_ARTIFACTS_DIR, "model.pt")
-if os.path.exists(_model_path):
+# The federated model (trained across 3 simulated hospitals, see
+# federated/) is what gets deployed once it exists — it is trained on
+# a more diverse population than the single centrally-trained model.
+# USE_FEDERATED_MODEL lets it be turned off for debugging without
+# touching code. If the selected variant's checkpoint file doesn't
+# exist yet (e.g. federated training hasn't been run), this falls
+# back to whichever checkpoint IS available rather than silently
+# serving an untrained random model.
+USE_FEDERATED = os.getenv("USE_FEDERATED_MODEL", "true").lower() == "true"
+_federated_path = os.path.join(_ARTIFACTS_DIR, "federated_model.pt")
+_centralized_path = os.path.join(_ARTIFACTS_DIR, "model.pt")
+
+if USE_FEDERATED and os.path.exists(_federated_path):
+    _model_path = _federated_path
+    MODEL_VARIANT = "federated"
+elif os.path.exists(_centralized_path):
+    _model_path = _centralized_path
+    MODEL_VARIANT = "centralized"
+else:
+    _model_path = None
+    MODEL_VARIANT = "untrained"
+
+if _model_path is not None:
     _model.load_state_dict(torch.load(_model_path, map_location=_device))
 _model.eval()
 

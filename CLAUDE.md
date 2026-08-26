@@ -293,10 +293,9 @@ MODEL_TIMEOUT_SECONDS=10
 
 ## Current phase
 
-Phase: Model build — Time2Vec Transformer sepsis model
-Date: [update daily]
-Merged: Drug interaction model (reframed), CLAUDE.md updated,
-old models removed
-In progress: Sepsis model training on PhysioNet 2019
-Blocked: MIMIC-IV credentials (applied, pending 1-3 days)
-Next: Federated learning wrapper, Qwen LLM alert, backend scaffold
+Phase:       Session 1 complete — sepsis model built
+Merged:      Time2Vec Transformer, val AUROC 0.7777, endpoint live
+In progress: Waiting for MIMIC-IV credentials for retrain
+Next session (Krishna): Federated learning with Flower
+Next session (Khushi): Node.js backend scaffold
+Blocked:     MIMIC-IV credentials (1-2 days remaining)

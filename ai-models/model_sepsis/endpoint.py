@@ -57,4 +57,5 @@ def health():
         "model": "time2vec-transformer-sepsis",
         "version": "1.0",
         "device": str(get_device()),
+        "model_variant": inference.MODEL_VARIANT,
     }
