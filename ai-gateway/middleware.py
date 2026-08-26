@@ -1,45 +1,50 @@
+"""
+JWT verification as a FastAPI dependency.
+
+JWT_SECRET must match backend/.env exactly (same string, both
+services) — the Node.js backend issues tokens, this gateway only
+verifies them, without ever calling back into Node.js to do so.
+"""
+
 from __future__ import annotations
 
 import os
 from typing import Optional
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException
 from jose import JWTError, jwt
 
-JWT_SECRET: str = os.getenv("JWT_SECRET", "")
-JWT_ALGORITHM: str = "HS256"
-JWT_ISSUER: str = "medicore-api"
+JWT_SECRET = os.getenv("JWT_SECRET", "medicore-dev-secret-change-in-production-32chars")
+JWT_ALGORITHM = "HS256"
+JWT_ISSUER = "medicore-api"
 
 
-def _decode(token: str) -> dict:
-    """Decode and verify a JWT. Raises HTTPException on any failure."""
-    if not JWT_SECRET:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWT_SECRET not configured",
-        )
+async def verify_token(authorization: Optional[str] = Header(None)) -> dict:
+    """FastAPI dependency. Verifies JWT from Authorization: Bearer <token>.
+
+    Raises 401 if missing or invalid. Returns the decoded payload.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    parts = authorization.split(" ")
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+    token = parts[1]
     try:
-        return jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM],
-            issuer=JWT_ISSUER,
-        )
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], issuer=JWT_ISSUER)
+        return payload
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    """FastAPI dependency — extracts and validates the Bearer JWT."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    token = authorization.split(" ", 1)[1]
-    return _decode(token)
+async def optional_token(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """Same as verify_token but returns None instead of raising —
+    for routes that work with or without auth."""
+    if not authorization:
+        return None
+    try:
+        return await verify_token(authorization)
+    except HTTPException:
+        return None

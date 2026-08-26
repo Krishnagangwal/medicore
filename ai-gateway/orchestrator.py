@@ -1,85 +1,165 @@
+"""
+Core of the AI Gateway: parallel model dispatch.
+
+asyncio.gather fires the sepsis and drug-interaction calls
+simultaneously — not sequentially — so the gateway's total latency is
+roughly max(sepsis_latency, drug_latency) instead of their sum. Each
+call is wrapped in its own try/except so one model failing (timeout,
+connection refused, bad response) never prevents the other's result
+from coming back.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import os
 import time
-from typing import Any, Dict
+import uuid
+from datetime import datetime, timezone
 
 import httpx
 
-from schemas import GatewayRequest, ModelBlock, ModelType
+from alert_generator import generate_alert_text
+from schemas import GatewayRequest, GatewayResponse, ModelBlock
 
-MODEL_URLS: Dict[str, str] = {
-    ModelType.TRIAGE.value: os.getenv("MODEL_1_URL", "http://localhost:8001"),
-    ModelType.DETERIORATION.value: os.getenv("MODEL_2_URL", "http://localhost:8002"),
-    ModelType.LAB_PARSER.value: os.getenv("MODEL_3_URL", "http://localhost:8003"),
-    ModelType.DRUG_INTERACTION.value: os.getenv("MODEL_4_URL", "http://localhost:8004"),
-    ModelType.READMISSION.value: os.getenv("MODEL_5_URL", "http://localhost:8005"),
-    ModelType.DIFFERENTIAL_DX.value: os.getenv("MODEL_6_URL", "http://localhost:8006"),
-}
-
-TIMEOUT_SECONDS: float = float(os.getenv("MODEL_TIMEOUT_SECONDS", "10"))
+SEPSIS_MODEL_URL = os.getenv("SEPSIS_MODEL_URL", "http://localhost:8001")
+DRUG_MODEL_URL = os.getenv("DRUG_MODEL_URL", "http://localhost:8004")
+MODEL_TIMEOUT = float(os.getenv("MODEL_TIMEOUT_SECONDS", "10"))
 
 
-async def _call_model(
+async def call_sepsis_model(
     client: httpx.AsyncClient,
-    model_name: str,
-    payload: Dict[str, Any],
-) -> ModelBlock:
-    url = MODEL_URLS.get(model_name)
-    if not url:
-        return ModelBlock(
-            status="skipped",
-            latency_ms=0,
-            error_message=f"No URL configured for {model_name}",
-        )
+    vitals_readings: list[dict],
+    encounter_id: str,
+) -> tuple[str, dict]:
+    """Call the Time2Vec Transformer endpoint.
 
-    t0 = time.monotonic()
+    Returns: ("success"|"error"|"timeout", result_dict)
+    """
+    start = time.time()
     try:
         response = await client.post(
-            f"{url}/predict",
-            json=payload,
-            timeout=TIMEOUT_SECONDS,
+            f"{SEPSIS_MODEL_URL}/predict",
+            json={"vitals_readings": vitals_readings, "encounter_id": encounter_id},
+            timeout=MODEL_TIMEOUT,
         )
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        if response.status_code == 200:
-            return ModelBlock(status="success", latency_ms=latency_ms, result=response.json())
-        return ModelBlock(
-            status="error",
-            latency_ms=latency_ms,
-            error_message=f"HTTP {response.status_code}: {response.text[:200]}",
-        )
+        latency = int((time.time() - start) * 1000)
+        response.raise_for_status()
+        return "success", {"data": response.json(), "latency_ms": latency}
     except httpx.TimeoutException:
-        return ModelBlock(
-            status="timeout",
-            latency_ms=int((time.monotonic() - t0) * 1000),
-            error_message="Model timed out",
-        )
-    except Exception as exc:  # noqa: BLE001
-        return ModelBlock(
-            status="error",
-            latency_ms=int((time.monotonic() - t0) * 1000),
-            error_message=str(exc),
-        )
+        return "timeout", {"error": f"Model timeout after {MODEL_TIMEOUT}s"}
+    except Exception as e:  # noqa: BLE001 — one model's failure must never break the other
+        return "error", {"error": str(e)}
 
 
-async def orchestrate(request: GatewayRequest) -> Dict[str, ModelBlock]:
-    """Call all requested models in parallel; always return partial results."""
-    payload: Dict[str, Any] = {
-        "patient_id": request.patient_id,
-        "encounter_id": request.encounter_id,
-        "context": request.context.model_dump(),
-    }
+async def call_drug_model(
+    client: httpx.AsyncClient,
+    medications: list[str],
+    encounter_id: str,
+) -> tuple[str, dict]:
+    """Call the drug interaction endpoint.
+
+    Returns: ("success"|"error"|"timeout"|"skipped", result_dict)
+    If medications has fewer than 2 items there are no pairs to check,
+    so the model is skipped rather than called.
+    """
+    if len(medications) < 2:
+        return "skipped", {"reason": "Fewer than 2 medications — no pairs to check"}
+
+    start = time.time()
+    try:
+        response = await client.post(
+            f"{DRUG_MODEL_URL}/predict",
+            json={"medications": medications},
+            timeout=MODEL_TIMEOUT,
+        )
+        latency = int((time.time() - start) * 1000)
+        response.raise_for_status()
+        return "success", {"data": response.json(), "latency_ms": latency}
+    except httpx.TimeoutException:
+        return "timeout", {"error": f"Model timeout after {MODEL_TIMEOUT}s"}
+    except Exception as e:  # noqa: BLE001
+        return "error", {"error": str(e)}
+
+
+async def dispatch(request: GatewayRequest) -> GatewayResponse:
+    """Main orchestration function.
+
+    Fires both models simultaneously. Never raises — always returns a
+    GatewayResponse, with per-model status reflecting whatever
+    actually happened to that model's call.
+    """
+    requested_at = datetime.now(timezone.utc).isoformat()
+    request_id = str(uuid.uuid4())
+
+    vitals_list = [
+        {k: v for k, v in reading.model_dump().items() if v is not None}
+        for reading in request.vitals_readings
+    ]
 
     async with httpx.AsyncClient() as client:
-        model_names = [m.value for m in request.models]
-        coros = [_call_model(client, name, payload) for name in model_names]
-        settled = await asyncio.gather(*coros, return_exceptions=True)
+        sepsis_task = call_sepsis_model(client, vitals_list, request.encounter_id)
+        drug_task = call_drug_model(client, request.medications, request.encounter_id)
 
-    output: Dict[str, ModelBlock] = {}
-    for name, result in zip(model_names, settled):
-        if isinstance(result, Exception):
-            output[name] = ModelBlock(status="error", latency_ms=0, error_message=str(result))
-        else:
-            output[name] = result
-    return output
+        (sepsis_status, sepsis_raw), (drug_status, drug_raw) = await asyncio.gather(sepsis_task, drug_task)
+
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    if sepsis_status == "success":
+        result = sepsis_raw["data"]
+        # The model returns raw numbers only; the human-readable
+        # sentence is a gateway concern, added here rather than by
+        # the model itself so alert wording can change (e.g. to an
+        # LLM later) without retraining or redeploying the model.
+        result["alert_text"] = generate_alert_text(result) if result.get("alert") else ""
+
+        sepsis_block = ModelBlock(
+            status="success",
+            latency_ms=sepsis_raw["latency_ms"],
+            result=result,
+            error_message=None,
+        )
+    else:
+        sepsis_block = ModelBlock(
+            status=sepsis_status,
+            latency_ms=None,
+            result=None,
+            error_message=sepsis_raw.get("error"),
+        )
+
+    if drug_status == "success":
+        drug_block = ModelBlock(
+            status="success",
+            latency_ms=drug_raw["latency_ms"],
+            result=drug_raw["data"],
+            error_message=None,
+        )
+    elif drug_status == "skipped":
+        drug_block = ModelBlock(
+            status="skipped",
+            latency_ms=None,
+            result={
+                "total_pairs_checked": 0,
+                "interaction_count": 0,
+                "interactions": [],
+                "reason": drug_raw["reason"],
+            },
+            error_message=None,
+        )
+    else:
+        drug_block = ModelBlock(
+            status=drug_status,
+            latency_ms=None,
+            result=None,
+            error_message=drug_raw.get("error"),
+        )
+
+    return GatewayResponse(
+        request_id=request_id,
+        patient_id=request.patient_id,
+        encounter_id=request.encounter_id,
+        requested_at=requested_at,
+        completed_at=completed_at,
+        sepsis=sepsis_block,
+        drug_interaction=drug_block,
+    )
