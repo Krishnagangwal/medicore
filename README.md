@@ -1,4 +1,4 @@
-# MediCore — AI-Powered Sepsis Care Platform
+# MediCore : AI-Powered Sepsis Care Platform
 
 > A 2026 reimagining of Sepsis Watch (Duke University, Sendak et al., FAccT 2020) — the first deep learning system deployed in routine hospital clinical care.
 
@@ -12,9 +12,9 @@
 
 ## What is MediCore?
 
-Sepsis kills 6 million people annually and is the leading cause of inpatient death in hospitals. The problem is not detection — it is that clinical staff detect it too late, or fail to complete the treatment bundle in time.
+Sepsis kills 6 million people annually and is the leading cause of inpatient death in hospitals. The problem is not detection, it is that clinical staff detect it too late, or fail to complete the treatment bundle in time.
 
-MediCore is an end-to-end clinical decision support platform that deploys AI at every critical decision point in sepsis care — from the first warning sign to safe treatment. It is designed for small to mid-size hospitals that cannot afford enterprise systems like Epic or Cerner.
+MediCore is an end to end clinical decision support platform that deploys AI at every critical decision point in sepsis care — from the first warning sign to safe treatment. It is designed for small to mid-size hospitals that cannot afford enterprise systems like Epic or Cerner.
 
 **What makes it different from the original Sepsis Watch:**
 
@@ -70,7 +70,7 @@ Inspired by and compared against:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Real-time monitoring flow:**
+**Real time monitoring flow:**
 ```
 Nurse logs vitals → Node.js → AI Gateway → Time2Vec Transformer
 → risk_score > 0.65 → Socket.io fires sepsis:alert → Nurse station
@@ -81,8 +81,7 @@ Nurse logs vitals → Node.js → AI Gateway → Time2Vec Transformer
 
 ## AI Models
 
-### Model 1 — Time2Vec Transformer (Sepsis Early Warning)
-
+### Model 1 : Time2Vec Transformer (Sepsis Early Warning)
 A modern deep learning architecture designed for irregular clinical time series.
 
 **Architecture:**
@@ -125,7 +124,7 @@ Each hospital trains locally. Only model weights are shared — no patient data 
 
 ---
 
-### Model 2 — Drug Interaction Safety Engine
+### Model 2 : Drug Interaction Safety Engine
 
 Antibiotic safety checking for sepsis treatment protocols.
 
