@@ -1,4 +1,4 @@
-# MediCore : AI-Powered Sepsis Care Platform
+# MediCore : Deep Learning and Transformer based Sepsis Care Platform
 
 > A 2026 reimagining of Sepsis Watch (Duke University, Sendak et al., FAccT 2020) — the first deep learning system deployed in routine hospital clinical care.
 
