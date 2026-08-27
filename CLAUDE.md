@@ -298,4 +298,4 @@ Merged:      Time2Vec Transformer, val AUROC 0.7777, endpoint live
 In progress: Waiting for MIMIC-IV credentials for retrain
 Next session (Krishna): Federated learning with Flower
 Next session (Khushi): Node.js backend scaffold
-Blocked:     MIMIC-IV credentials (1-2 days remaining)
+<!-- Blocked:     MIMIC-IV credentials (1-2 days remaining) -->
