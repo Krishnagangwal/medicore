@@ -38,11 +38,17 @@ async function scoreEncounter(encounter) {
       {
         patient_id: encounter.patientId,
         encounter_id: encounter.id,
-        models: ['deterioration'],
-        context: {
-          medications,
-          vitals_last_n: 24,
-        },
+        vitals_readings: encounter.vitals.map((v, idx) => ({
+          hr: v.heartRate,
+          o2sat: v.spo2,
+          temp: v.temperature,
+          sbp: v.systolicBp,
+          map: v.map,
+          dbp: v.diastolicBp,
+          resp: v.respiratoryRate,
+          iculos: idx + 1
+        })),
+        medications,
       },
       {
         headers: { Authorization: `Bearer ${token}` },
