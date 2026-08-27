@@ -47,3 +47,4 @@ frontend/.vite/
 
 # Prisma generated
 backend/node_modules/
+ai-gateway.zip
