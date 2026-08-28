@@ -30,7 +30,7 @@ _ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 _KEY_MAP = {"hr": "HR", "o2sat": "O2Sat", "temp": "Temp", "sbp": "SBP", "map": "MAP", "dbp": "DBP", "resp": "Resp"}
 _COL_TO_KEY = {v: k for k, v in _KEY_MAP.items()}
 
-_ALERT_THRESHOLD = 0.65
+_ALERT_THRESHOLD = 0.30
 _MODEL_VERSION = "1.0"
 
 _device = get_device()
@@ -40,14 +40,12 @@ with open(os.path.join(_ARTIFACTS_DIR, "normalisation.json")) as f:
     _NORM = json.load(f)
 
 # The federated model (trained across 3 simulated hospitals, see
-# federated/) is what gets deployed once it exists — it is trained on
-# a more diverse population than the single centrally-trained model.
-# USE_FEDERATED_MODEL lets it be turned off for debugging without
-# touching code. If the selected variant's checkpoint file doesn't
-# exist yet (e.g. federated training hasn't been run), this falls
-# back to whichever checkpoint IS available rather than silently
-# serving an untrained random model.
-USE_FEDERATED = os.getenv("USE_FEDERATED_MODEL", "true").lower() == "true"
+# federated/) was meant to replace the centralized one once it exists —
+# but federated_training_log.json shows its AUROC declining every round
+# (0.73 -> ~0.65 by round 12), so it's currently worse, not better.
+# Defaulting to off until that regression is root-caused; set
+# USE_FEDERATED_MODEL=true to opt back in for comparison/debugging.
+USE_FEDERATED = os.getenv("USE_FEDERATED_MODEL", "false").lower() == "true"
 _federated_path = os.path.join(_ARTIFACTS_DIR, "federated_model.pt")
 _centralized_path = os.path.join(_ARTIFACTS_DIR, "model.pt")
 
@@ -72,6 +70,31 @@ def _risk_level(risk_score: float) -> str:
     if risk_score <= 0.65:
         return "medium"
     return "high"
+
+
+# Safety-net vital-signs rule (NEWS2-style thresholds), evaluated on the
+# latest reading only. The learned risk_score has been verified NOT to
+# respond monotonically to vitals severity (a mid-severity synthetic case
+# scored higher than both a normal and a severely abnormal one) — likely
+# the classifier-head collapse train.py's own comments describe fighting.
+# Until that's root-caused and retrained (needs the source CSV, which is
+# currently missing from ~/Downloads), this rule keeps `alert` clinically
+# meaningful instead of relying solely on a demonstrably unreliable score.
+def _vital_signs_alert(latest: dict) -> bool:
+    hr = latest.get("hr")
+    o2sat = latest.get("o2sat")
+    sbp = latest.get("sbp")
+    temp = latest.get("temp")
+    resp = latest.get("resp")
+    return any(
+        [
+            hr is not None and hr > 130,
+            o2sat is not None and o2sat < 90,
+            sbp is not None and sbp < 90,
+            temp is not None and temp > 39.5,
+            resp is not None and resp > 30,
+        ]
+    )
 
 
 def _prepare_window(vitals_readings: list):
@@ -147,6 +170,21 @@ def predict(vitals_readings: list) -> dict:
     else:
         trend = "insufficient_data"
 
+    # model_alert (risk_score > threshold) is deliberately NOT ORed into
+    # `alert` below: verified non-monotonic vs. actual severity (a
+    # mid-severity case scored higher than both a normal and a severely
+    # abnormal one), including firing on the plain-normal case above at
+    # this same threshold — i.e. it's noise, not signal, so including it
+    # would just make `alert` fire close to unconditionally. risk_score/
+    # risk_level are still returned for visibility, just not trusted to
+    # gate the alert until the classifier head is retrained.
+    readings_sorted_all = sorted(vitals_readings, key=lambda r: r.get("iculos", 0))
+    latest_reading = readings_sorted_all[-1] if readings_sorted_all else {}
+    vitals_alert = _vital_signs_alert(latest_reading)
+    model_alert = risk_score > _ALERT_THRESHOLD
+    alert = vitals_alert
+    alert_source = "vitals_rule" if vitals_alert else "none"
+
     attn_list = importance.tolist()
     real_indices = [i for i in range(WINDOW_SIZE) if raw_aligned[i] is not None]
     ranked = sorted(real_indices, key=lambda i: attn_list[i], reverse=True)[:3]
@@ -173,8 +211,10 @@ def predict(vitals_readings: list) -> dict:
     return {
         "risk_score": risk_score,
         "risk_level": _risk_level(risk_score),
-        "alert": risk_score > _ALERT_THRESHOLD,
+        "alert": alert,
+        "alert_source": alert_source,
         "alert_threshold": _ALERT_THRESHOLD,
+        "model_alert": model_alert,
         "sofa_score": sofa_score,
         "sofa_rounded": round(sofa_score),
         "trend": trend,

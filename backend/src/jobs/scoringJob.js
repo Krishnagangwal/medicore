@@ -144,8 +144,23 @@ async function runScoringPass() {
   console.log(`[scoringJob] Scoring ${activeEncounters.rows.length} active encounter(s)`);
 
   for (const encounter of activeEncounters.rows) {
-    // Sequential on purpose: keeps load on the AI Gateway predictable and
-    // avoids hammering it with N parallel requests every hour.
+    // Fetch last 24 vitals for this encounter
+    const vitalsResult = await query(
+      `SELECT "heartRate", "spo2", "temperature", "systolicBp", 
+              "map", "diastolicBp", "respiratoryRate", "recordedAt"
+       FROM vitals 
+       WHERE "encounterId" = $1 
+       ORDER BY "recordedAt" ASC 
+       LIMIT 24`,
+      [encounter.id]
+    );
+    encounter.vitals = vitalsResult.rows;
+
+    if (encounter.vitals.length < 2) {
+      console.log(`[scoringJob] Skipping encounter ${encounter.id} — fewer than 2 vitals`);
+      continue;
+    }
+
     await scoreEncounter(encounter).catch((err) =>
       console.error(`[scoringJob] Unhandled error scoring encounter ${encounter.id}:`, err),
     );
