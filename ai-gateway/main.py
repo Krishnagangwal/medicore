@@ -83,6 +83,12 @@ async def sepsis_assessment(request: GatewayRequest, user: dict = Depends(verify
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Gateway internal error: {str(e)}")
 
+@app.post("/gateway/predict", response_model=GatewayResponse)
+async def predict_alias(
+    request: GatewayRequest,
+    user: dict = Depends(verify_token)
+):
+    return await sepsis_assessment(request, user)
 
 @app.post("/gateway/sepsis-assessment/public", response_model=GatewayResponse)
 async def sepsis_assessment_public(request: GatewayRequest) -> GatewayResponse:
