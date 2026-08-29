@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS patients (
   "chronicConditions" TEXT[] NOT NULL DEFAULT '{}',
   allergies           JSONB NOT NULL DEFAULT '[]',
   "createdAt"         TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "updatedAt"         TIMESTAMPTZ NOT NULL DEFAULT now()
+  "updatedAt"         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "hospitalId" UUID REFERENCES hospitals(id)
 );
 
 DROP TRIGGER IF EXISTS trg_patients_updated_at ON patients;
