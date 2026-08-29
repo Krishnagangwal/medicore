@@ -29,8 +29,11 @@ export function AuthProvider({ children }) {
     if (token && user?.role) connectSocket(token, user.role)
   }, [token, user])
 
-  const login = useCallback(async (email, password) => {
-    const { data } = await loginRequest(email, password)
+  // Accepts either { email, password } or { userId, password, hospitalId } —
+  // the multi-step LoginPage needs both shapes, so this takes one object
+  // instead of fixed (email, password) args and passes it straight through.
+  const login = useCallback(async (credentials) => {
+    const { data } = await loginRequest(credentials)
     localStorage.setItem(TOKEN_KEY, data.accessToken)
     localStorage.setItem(USER_KEY, JSON.stringify(data.user))
     connectSocket(data.accessToken, data.user.role)

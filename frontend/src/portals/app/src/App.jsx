@@ -1,7 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './context/AuthContext.jsx'
+import LandingPage from './pages/LandingPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
-import SignupPage from './pages/SignupPage.jsx'
+import RequestPage from './pages/RequestPage.jsx'
 import NurseDashboardPage from './nurse/pages/DashboardPage.jsx'
 import NursePatientsPage from './nurse/pages/PatientsPage.jsx'
 import DoctorMainPage from './doctor/pages/MainPage.jsx'
@@ -25,6 +26,9 @@ function RoleProtectedRoute({ role, children }) {
   return children
 }
 
+// Only used for unmatched paths now — `/` itself always shows the landing
+// page (per this session's task: authenticated users can still see it and
+// navigate to /login themselves rather than being redirected away from it).
 function RootRedirect() {
   const { isAuthenticated, user } = useAuth()
   if (!isAuthenticated) return <Navigate to="/login" replace />
@@ -34,8 +38,9 @@ function RootRedirect() {
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/request" element={<RequestPage />} />
 
       <Route
         path="/nurse/dashboard"
@@ -72,7 +77,6 @@ export default function App() {
         }
       />
 
-      <Route path="/" element={<RootRedirect />} />
       <Route path="*" element={<RootRedirect />} />
     </Routes>
   )
