@@ -78,11 +78,25 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/login
+// Mode A (standard, e.g. superadmin@medicore.platform): { email, password }
+// Mode B (hospital staff dropdown login):  { userId, password, hospitalId }
+// — the frontend fetches the hospital list, then GET
+// /api/hospitals/:hospitalId/staff?role=NURSE|DOCTOR to populate a name
+// dropdown, then logs in with that user's id instead of typing an email.
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, userId, hospitalId } = req.body;
+    const isStaffLogin = Boolean(userId);
 
-    if (!email || !password) {
+    if (isStaffLogin) {
+      if (!password || !hospitalId) {
+        return res.status(400).json({
+          error: 'userId, password, and hospitalId are required',
+          code: 'VALIDATION_ERROR',
+          statusCode: 400,
+        });
+      }
+    } else if (!email || !password) {
       return res.status(400).json({
         error: 'email and password are required',
         code: 'VALIDATION_ERROR',
@@ -90,7 +104,12 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const result = await query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = isStaffLogin
+      ? await query(
+          `SELECT * FROM users WHERE id = $1 AND "hospitalId" = $2 AND "isActive" = true`,
+          [userId, hospitalId],
+        )
+      : await query('SELECT * FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
 
     if (!user || !user.isActive) {
@@ -126,6 +145,8 @@ router.post('/login', async (req, res) => {
         role: user.role,
         fullName: user.fullName,
         ward: user.ward,
+        hospitalId: user.hospitalId,
+        hospitalName,
       },
     });
   } catch (err) {
