@@ -19,6 +19,11 @@ function basePayload(user) {
     role: user.role,
     fullName: user.fullName,
     patientId: user.patientId || null,
+    // hospitalName isn't a column on users — callers (auth.routes.js) must
+    // look it up via the hospitals table and attach it to `user` before
+    // signing, since this function stays DB-free/synchronous.
+    hospitalId: user.hospitalId || null,
+    hospitalName: user.hospitalName || null,
   };
 }
 

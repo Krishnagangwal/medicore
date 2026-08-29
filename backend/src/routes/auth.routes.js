@@ -17,6 +17,14 @@ const REFRESH_COOKIE_OPTIONS = {
 
 const VALID_ROLES = ['NURSE', 'DOCTOR', 'ADMIN'];
 
+// SUPER_ADMIN has no hospitalId, so this intentionally returns null rather
+// than querying — matches the "hospitalId null -> hospitalName null" rule.
+async function getHospitalName(hospitalId) {
+  if (!hospitalId) return null;
+  const result = await query('SELECT name FROM hospitals WHERE id = $1', [hospitalId]);
+  return result.rows[0]?.name || null;
+}
+
 // POST /api/auth/register
 // Scaffold note: open for now so seeding/dev works end-to-end. A future
 // session should gate this behind ADMIN auth once the admin portal exists.
@@ -104,7 +112,8 @@ router.post('/login', async (req, res) => {
 
     await query('UPDATE users SET "lastLogin" = now() WHERE id = $1', [user.id]);
 
-    const accessToken = signAccessToken(user);
+    const hospitalName = await getHospitalName(user.hospitalId);
+    const accessToken = signAccessToken({ ...user, hospitalName });
     const refreshToken = signRefreshToken(user);
 
     res.cookie(REFRESH_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
@@ -171,7 +180,8 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    const accessToken = signAccessToken(user);
+    const hospitalName = await getHospitalName(user.hospitalId);
+    const accessToken = signAccessToken({ ...user, hospitalName });
     return res.status(200).json({ accessToken });
   } catch (err) {
     console.error(err);
