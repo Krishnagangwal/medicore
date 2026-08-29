@@ -59,6 +59,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [pendingAdminNotice, setPendingAdminNotice] = useState(false)
 
+  // SUPER_ADMIN has no hospital, so the hospital-first wizard below can
+  // never reach them — this is a parallel, simplified path out of Step 1.
+  const [platformAdminMode, setPlatformAdminMode] = useState(false)
+  const [platformEmail, setPlatformEmail] = useState('')
+  const [platformPassword, setPlatformPassword] = useState('')
+
   const { login } = useAuth()
   const navigate = useNavigate()
 
@@ -119,6 +125,20 @@ export default function LoginPage() {
     }
   }
 
+  const handleSubmitPlatformAdmin = async (e) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await login({ email: platformEmail.trim(), password: platformPassword })
+      navigate('/superadmin')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Invalid credentials. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center px-4">
       <div className="w-full max-w-sm bg-white rounded-[20px] shadow-lg p-8">
@@ -129,7 +149,7 @@ export default function LoginPage() {
           <h1 className="text-xl font-bold text-primary">MediCore</h1>
         </div>
 
-        <StepDots step={step} />
+        {!platformAdminMode && <StepDots step={step} />}
 
         {error && (
           <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">
@@ -137,7 +157,45 @@ export default function LoginPage() {
           </div>
         )}
 
-        {pendingAdminNotice ? (
+        {platformAdminMode ? (
+          <form onSubmit={handleSubmitPlatformAdmin} className="space-y-4">
+            <p className="text-center font-semibold text-gray-800">Platform Admin Sign In</p>
+            <input
+              type="email"
+              value={platformEmail}
+              onChange={(e) => setPlatformEmail(e.target.value)}
+              required
+              autoFocus
+              placeholder="Email"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <input
+              type="password"
+              value={platformPassword}
+              onChange={(e) => setPlatformPassword(e.target.value)}
+              required
+              placeholder="Password"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-primary text-white font-semibold rounded-lg py-2.5 hover:bg-primary/90 transition disabled:opacity-60"
+            >
+              {loading ? 'Signing in...' : 'Sign In'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPlatformAdminMode(false)
+                setError('')
+              }}
+              className="w-full text-center text-sm text-gray-500 hover:text-primary transition"
+            >
+              ← Back
+            </button>
+          </form>
+        ) : pendingAdminNotice ? (
           <div className="text-center py-6">
             <p className="font-semibold text-gray-800 mb-2">Hospital Admin portal — coming soon</p>
             <p className="text-sm text-gray-500 mb-5">
@@ -174,6 +232,19 @@ export default function LoginPage() {
                 >
                   Continue
                 </button>
+                <p className="text-center text-sm text-gray-500">
+                  MediCore platform admin?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('')
+                      setPlatformAdminMode(true)
+                    }}
+                    className="text-primary font-semibold hover:underline"
+                  >
+                    Sign in here →
+                  </button>
+                </p>
               </div>
             )}
 
@@ -289,7 +360,7 @@ export default function LoginPage() {
           </>
         )}
 
-        {!pendingAdminNotice && (
+        {!platformAdminMode && !pendingAdminNotice && (
           <p className="text-center text-sm text-gray-500 mt-5">
             Hospital not registered yet?{' '}
             <Link to="/request" className="text-primary font-semibold hover:underline">

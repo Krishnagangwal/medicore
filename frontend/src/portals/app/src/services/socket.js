@@ -12,8 +12,15 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL ?? 'http://localhost:5000'
 // separate nurse/doctor portals (which each hardcoded their own namespace),
 // this merged app serves every role, so the namespace is derived from the
 // logged-in user's role instead.
+// Only these roles have a matching backend namespace (see
+// backend/src/sockets/index.js's NAMESPACE_ROLE) — SUPER_ADMIN has none,
+// since platform admins have no real-time nurse/doctor dashboard events to
+// receive. Without this guard, logging in as SUPER_ADMIN (see LoginPage.jsx's
+// platform-admin path) would always throw "Invalid namespace" on connect.
+const SOCKET_ROLES = ['NURSE', 'DOCTOR', 'ADMIN']
+
 export function connectSocket(token, role) {
-  const namespace = role ? role.toLowerCase() : null
+  const namespace = role && SOCKET_ROLES.includes(role) ? role.toLowerCase() : null
 
   // Guard on existence + namespace match (not just `.connected`) so callers
   // racing during the handshake — e.g. AuthContext on restore vs. a
