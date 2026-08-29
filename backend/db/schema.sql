@@ -20,12 +20,46 @@ DO $$ BEGIN
   CREATE TYPE notif_severity AS ENUM ('INFO', 'WARNING', 'CRITICAL');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  CREATE TYPE hospital_status AS ENUM ('pending', 'approved', 'rejected');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Multi-hospital support (session: multi-hospital schema). `role` predates
+-- this and was already a native enum, not a CHECK constraint, so extending
+-- it for SUPER_ADMIN is a single ADD VALUE rather than the drop/recreate a
+-- CHECK-based design would need — see the ALTER TYPE below, kept outside
+-- any DO block since ADD VALUE can't run inside one.
+ALTER TYPE role ADD VALUE IF NOT EXISTS 'SUPER_ADMIN';
+
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN
   NEW."updatedAt" = now();
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- hospitals
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS hospitals (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT NOT NULL,
+  "adminEmail"    TEXT NOT NULL UNIQUE,
+  "adminName"     TEXT NOT NULL,
+  status          hospital_status NOT NULL DEFAULT 'pending',
+  "approvedAt"    TIMESTAMPTZ,
+  "approvedBy"    UUID,
+  "rejectedAt"    TIMESTAMPTZ,
+  "rejectionNote" TEXT,
+  "createdAt"     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updatedAt"     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_hospitals_status ON hospitals(status);
+
+DROP TRIGGER IF EXISTS trg_hospitals_updated_at ON hospitals;
+CREATE TRIGGER trg_hospitals_updated_at BEFORE UPDATE ON hospitals
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- users
@@ -39,9 +73,21 @@ CREATE TABLE IF NOT EXISTS users (
   ward          TEXT,
   "isActive"    BOOLEAN NOT NULL DEFAULT true,
   "lastLogin"   TIMESTAMPTZ,
+  "hospitalId"  UUID REFERENCES hospitals(id),
+  "invitedBy"   UUID REFERENCES users(id),
+  "mustChangePassword" BOOLEAN NOT NULL DEFAULT false,
   "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- users existed before this session — CREATE TABLE IF NOT EXISTS above is a
+-- no-op against the live database, so the new columns need adding
+-- explicitly for it to actually reach the new shape.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "hospitalId" UUID REFERENCES hospitals(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "invitedBy" UUID REFERENCES users(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "mustChangePassword" BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_users_hospital ON users("hospitalId", role);
 
 DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
 CREATE TRIGGER trg_users_updated_at BEFORE UPDATE ON users
