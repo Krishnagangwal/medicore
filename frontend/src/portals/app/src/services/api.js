@@ -100,6 +100,23 @@ export const getHospitalStaff = (hospitalId, role) =>
 // Public — a prospective hospital's access request.
 export const requestHospitalAccess = (payload) => api.post('/api/hospitals/request', payload)
 
+// SUPER_ADMIN only (Bearer token attached automatically by the request
+// interceptor above — every call below relies on that, not a manual header).
+export const getHospitalRequests = () => api.get('/api/hospitals/admin/requests')
+
+export const getAllHospitals = () => api.get('/api/hospitals/admin/all')
+
+export const approveHospital = (id) => api.post(`/api/hospitals/admin/${id}/approve`)
+
+export const rejectHospital = (id, note) => api.post(`/api/hospitals/admin/${id}/reject`, { note })
+
+// ADMIN only (hospital admin managing their own staff).
+export const getMyStaff = () => api.get('/api/hospital/staff')
+
+export const inviteStaff = (data) => api.post('/api/hospital/invite', data)
+
+export const deactivateStaff = (userId) => api.delete(`/api/hospital/staff/${userId}`)
+
 export const getEncounters = () => api.get('/api/encounters')
 
 export const getEncounter = (id) => api.get(`/api/encounters/${id}`)

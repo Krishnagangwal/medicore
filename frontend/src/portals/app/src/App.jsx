@@ -6,10 +6,14 @@ import RequestPage from './pages/RequestPage.jsx'
 import NurseDashboardPage from './nurse/pages/DashboardPage.jsx'
 import NursePatientsPage from './nurse/pages/PatientsPage.jsx'
 import DoctorMainPage from './doctor/pages/MainPage.jsx'
+import SuperAdminDashboard from './pages/SuperAdminDashboard.jsx'
+import HospitalAdminDashboard from './pages/HospitalAdminDashboard.jsx'
 
 function dashboardPathForRole(role) {
   if (role === 'NURSE') return '/nurse/dashboard'
   if (role === 'DOCTOR') return '/doctor'
+  if (role === 'SUPER_ADMIN') return '/superadmin'
+  if (role === 'ADMIN') return '/admin'
   return null
 }
 
@@ -73,6 +77,23 @@ export default function App() {
         element={
           <RoleProtectedRoute role="DOCTOR">
             <DoctorMainPage />
+          </RoleProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/superadmin"
+        element={
+          <RoleProtectedRoute role="SUPER_ADMIN">
+            <SuperAdminDashboard />
+          </RoleProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <RoleProtectedRoute role="ADMIN">
+            <HospitalAdminDashboard />
           </RoleProtectedRoute>
         }
       />

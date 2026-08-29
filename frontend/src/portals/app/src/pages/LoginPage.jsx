@@ -10,9 +10,17 @@ const ROLES = [
   { value: 'ADMIN', label: 'Admin' },
 ]
 
+// Kept in sync with the same-named function in App.jsx (duplicated rather
+// than imported since they're both small and App.jsx doesn't export it) —
+// out of sync once already: ADMIN login worked but silently fell through
+// to the "coming soon" message here because this copy didn't know about
+// ADMIN/SUPER_ADMIN yet after App.jsx's was updated to add /admin and
+// /superadmin routes.
 function dashboardPathForRole(role) {
   if (role === 'NURSE') return '/nurse/dashboard'
   if (role === 'DOCTOR') return '/doctor'
+  if (role === 'SUPER_ADMIN') return '/superadmin'
+  if (role === 'ADMIN') return '/admin'
   return null
 }
 
