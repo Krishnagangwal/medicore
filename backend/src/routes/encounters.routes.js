@@ -5,15 +5,32 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
+// Duplicated in each route file that needs it, per this session's task —
+// verifies an encounter belongs to a hospital before any encounter-scoped
+// read/write. Pass hospitalId=null (SUPER_ADMIN) to bypass entirely.
+async function verifyHospitalOwnership(encounterId, hospitalId) {
+  if (!hospitalId) return true;
+  const result = await query(
+    `SELECT e.id FROM encounters e
+     JOIN patients p ON p.id = e."patientId"
+     WHERE e.id = $1 AND p."hospitalId" = $2`,
+    [encounterId, hospitalId],
+  );
+  return result.rows.length > 0;
+}
+
 // GET /api/encounters
 router.get('/', async (req, res, next) => {
   try {
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const params = isSuperAdmin ? [] : [req.user.hospitalId];
     const result = await query(
       `SELECT e.*, p."fullName" as "patientName", p."patientCode"
        FROM encounters e
        JOIN patients p ON p.id = e."patientId"
-       WHERE e.status = 'ACTIVE'
+       WHERE e.status = 'ACTIVE' ${isSuperAdmin ? '' : 'AND p."hospitalId" = $1'}
        ORDER BY e."admittedAt" DESC`,
+      params,
     );
     return res.status(200).json({ data: result.rows });
   } catch (err) {
@@ -24,6 +41,14 @@ router.get('/', async (req, res, next) => {
 // GET /api/encounters/:id
 router.get('/:id', async (req, res, next) => {
   try {
+    const owns = await verifyHospitalOwnership(
+      req.params.id,
+      req.user.role === 'SUPER_ADMIN' ? null : req.user.hospitalId,
+    );
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
+    }
+
     const encounterResult = await query(
       `SELECT e.*, p."fullName", p."patientCode", p.gender,
               p."bloodType", p."chronicConditions", p.allergies
@@ -79,7 +104,15 @@ router.post('/', requireRole('NURSE', 'DOCTOR', 'ADMIN'), async (req, res, next)
       });
     }
 
-    const patientResult = await query('SELECT id FROM patients WHERE id = $1', [patientId]);
+    // POST is NURSE/DOCTOR/ADMIN only (never SUPER_ADMIN), so
+    // req.user.hospitalId is always a real hospital — this doubles as the
+    // "patientId belongs to hospital" check: a patient from another
+    // hospital just won't match, and comes back as the same 404 as a
+    // genuinely nonexistent patientId (no need to distinguish the two).
+    const patientResult = await query(
+      'SELECT id FROM patients WHERE id = $1 AND "hospitalId" = $2',
+      [patientId, req.user.hospitalId],
+    );
     if (!patientResult.rows[0]) {
       return res.status(404).json({
         error: 'Patient not found',
@@ -116,6 +149,11 @@ router.post('/', requireRole('NURSE', 'DOCTOR', 'ADMIN'), async (req, res, next)
 // PATCH /api/encounters/:id/discharge
 router.patch('/:id/discharge', requireRole('DOCTOR', 'ADMIN'), async (req, res, next) => {
   try {
+    const owns = await verifyHospitalOwnership(req.params.id, req.user.hospitalId);
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
+    }
+
     const result = await query(
       `UPDATE encounters SET status = 'DISCHARGED', "dischargedAt" = NOW()
        WHERE id = $1

@@ -65,7 +65,7 @@ export default function LoginPage() {
   const [platformEmail, setPlatformEmail] = useState('')
   const [platformPassword, setPlatformPassword] = useState('')
 
-  const { login } = useAuth()
+  const { login, logout } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -130,7 +130,12 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login({ email: platformEmail.trim(), password: platformPassword })
+      const { user } = await login({ email: platformEmail.trim(), password: platformPassword })
+      if (user.role !== 'SUPER_ADMIN') {
+        logout()
+        setError('This account is not a platform admin.')
+        return
+      }
       navigate('/superadmin')
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid credentials. Please try again.')

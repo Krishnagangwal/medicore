@@ -5,6 +5,7 @@ import {
   getAllHospitals,
   approveHospital,
   rejectHospital,
+  deleteHospital,
 } from '../services/api.js'
 
 function relativeTime(dateStr) {
@@ -29,6 +30,64 @@ function StatusBadge({ status }) {
     <span className={`px-2.5 py-1 rounded-full text-xs font-semibold capitalize ${STATUS_STYLES[status] || 'bg-gray-100 text-gray-600'}`}>
       {status}
     </span>
+  )
+}
+
+function HospitalRow({ hospital, onDelete }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    setBusy(true)
+    try {
+      await onDelete(hospital.id)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <tr className="border-b border-gray-50 last:border-0">
+      <td className="px-5 py-3 font-medium text-gray-800">{hospital.name}</td>
+      <td className="px-5 py-3 text-gray-600">{hospital.adminEmail}</td>
+      <td className="px-5 py-3">
+        <StatusBadge status={hospital.status} />
+      </td>
+      <td className="px-5 py-3 text-gray-500">
+        {new Date(hospital.createdAt).toLocaleDateString()}
+      </td>
+      <td className="px-5 py-3">
+        {confirming ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-red-600">Delete all data?</span>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={busy}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition disabled:opacity-60"
+            >
+              {busy ? 'Deleting...' : 'Confirm'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:text-gray-700 transition"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold border-2 border-red-500 text-red-500 hover:bg-red-50 transition"
+          >
+            Delete
+          </button>
+        )}
+      </td>
+    </tr>
   )
 }
 
@@ -224,6 +283,16 @@ export default function SuperAdminDashboard() {
     fetchHospitals()
   }
 
+  const handleDelete = async (id) => {
+    try {
+      await deleteHospital(id)
+      addToast('Hospital and all related data deleted.', 'success')
+      setHospitals((prev) => prev.filter((h) => h.id !== id))
+    } catch {
+      addToast('Failed to delete hospital.', 'error')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-surface">
       <header className="bg-white shadow-sm">
@@ -291,33 +360,25 @@ export default function SuperAdminDashboard() {
                     <th className="px-5 py-3 font-medium">Admin Email</th>
                     <th className="px-5 py-3 font-medium">Status</th>
                     <th className="px-5 py-3 font-medium">Date</th>
+                    <th className="px-5 py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {hospitalsLoading ? (
                     <tr>
-                      <td className="px-5 py-4 text-gray-400" colSpan={4}>
+                      <td className="px-5 py-4 text-gray-400" colSpan={5}>
                         Loading...
                       </td>
                     </tr>
                   ) : hospitals.length === 0 ? (
                     <tr>
-                      <td className="px-5 py-4 text-gray-400" colSpan={4}>
+                      <td className="px-5 py-4 text-gray-400" colSpan={5}>
                         No hospitals yet
                       </td>
                     </tr>
                   ) : (
                     hospitals.map((h) => (
-                      <tr key={h.id} className="border-b border-gray-50 last:border-0">
-                        <td className="px-5 py-3 font-medium text-gray-800">{h.name}</td>
-                        <td className="px-5 py-3 text-gray-600">{h.adminEmail}</td>
-                        <td className="px-5 py-3">
-                          <StatusBadge status={h.status} />
-                        </td>
-                        <td className="px-5 py-3 text-gray-500">
-                          {new Date(h.createdAt).toLocaleDateString()}
-                        </td>
-                      </tr>
+                      <HospitalRow key={h.id} hospital={h} onDelete={handleDelete} />
                     ))
                   )}
                 </tbody>

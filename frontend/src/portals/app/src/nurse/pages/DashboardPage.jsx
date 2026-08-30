@@ -10,6 +10,7 @@ import StatCard from '../components/StatCard.jsx'
 import PatientRiskQueue from '../components/PatientRiskQueue.jsx'
 import AlertPanel from '../components/AlertPanel.jsx'
 import LogVitalsModal from '../components/LogVitalsModal.jsx'
+import AdmitPatientModal from '../components/AdmitPatientModal.jsx'
 import TreatmentChecklist from '../components/TreatmentChecklist.jsx'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { connectSocket } from '../../services/socket.js'
@@ -45,6 +46,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [flash, setFlash] = useState(false)
+  const [admitting, setAdmitting] = useState(false)
 
   const fetchEncounters = useCallback(async () => {
     try {
@@ -177,9 +179,18 @@ export default function DashboardPage() {
             <h1 className="text-2xl font-bold text-primary">ICU Nurse Station</h1>
             <p className="text-sm text-gray-500 mt-1">Manage sepsis patients, log vitals, monitor alerts</p>
           </div>
-          <div className="text-left sm:text-right text-sm">
-            <p className="font-medium text-gray-700">MediCore General Hospital</p>
-            <p className="text-gray-500">{today}</p>
+          <div className="flex items-center gap-4">
+            <div className="text-left sm:text-right text-sm">
+              <p className="font-medium text-gray-700">MediCore General Hospital</p>
+              <p className="text-gray-500">{today}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAdmitting(true)}
+              className="shrink-0 bg-primary text-white text-sm font-semibold rounded-lg px-4 py-2 hover:bg-primary/90 transition"
+            >
+              + Admit Patient
+            </button>
           </div>
         </header>
 
@@ -248,6 +259,10 @@ export default function DashboardPage() {
 
       {vitalsTarget && (
         <LogVitalsModal encounter={vitalsTarget} onClose={() => setVitalsTarget(null)} onSuccess={() => {}} />
+      )}
+
+      {admitting && (
+        <AdmitPatientModal onClose={() => setAdmitting(false)} onSuccess={fetchEncounters} />
       )}
     </div>
   )

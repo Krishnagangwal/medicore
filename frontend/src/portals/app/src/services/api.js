@@ -110,6 +110,8 @@ export const approveHospital = (id) => api.post(`/api/hospitals/admin/${id}/appr
 
 export const rejectHospital = (id, note) => api.post(`/api/hospitals/admin/${id}/reject`, { note })
 
+export const deleteHospital = (id) => api.delete(`/api/hospitals/admin/${id}`)
+
 // ADMIN only (hospital admin managing their own staff).
 export const getMyStaff = () => api.get('/api/hospital/staff')
 
@@ -120,6 +122,10 @@ export const deactivateStaff = (userId) => api.delete(`/api/hospital/staff/${use
 export const getEncounters = () => api.get('/api/encounters')
 
 export const getEncounter = (id) => api.get(`/api/encounters/${id}`)
+
+export const createPatient = (data) => api.post('/api/patients', data)
+
+export const createEncounter = (data) => api.post('/api/encounters', data)
 
 // GET /api/patients/:id is the only source for dob/contactPhone — the
 // encounter detail endpoint only embeds a partial patient record. Used by

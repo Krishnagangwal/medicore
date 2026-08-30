@@ -8,11 +8,15 @@ const medicationsRoutes = require('./medications.routes');
 const predictionsRoutes = require('./predictions.routes');
 const notificationsRoutes = require('./notifications.routes');
 const gatewayRoutes = require('./gateway.routes');
+const hospitalsRoutes = require('./hospitals.routes');
+const hospitalAdminRoutes = require('./hospitalAdmin.routes');
 
 const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/patients', patientsRoutes);
+router.use('/hospitals', hospitalsRoutes);
+router.use('/hospital', hospitalAdminRoutes);
 
 // Nested reads (mergeParams routers) — must come before the flat
 // '/encounters' mount so :encounterId sub-resources resolve first.

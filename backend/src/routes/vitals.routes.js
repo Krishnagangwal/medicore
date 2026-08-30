@@ -12,14 +12,34 @@ router.use(authenticate);
 
 const VITAL_FIELDS = ['heartRate', 'systolicBp', 'diastolicBp', 'temperature', 'respiratoryRate', 'spo2', 'map'];
 
+// Duplicated in each route file that needs it, per this session's task.
+async function verifyHospitalOwnership(encounterId, hospitalId) {
+  if (!hospitalId) return true;
+  const result = await query(
+    `SELECT e.id FROM encounters e
+     JOIN patients p ON p.id = e."patientId"
+     WHERE e.id = $1 AND p."hospitalId" = $2`,
+    [encounterId, hospitalId],
+  );
+  return result.rows.length > 0;
+}
+
 // GET /api/encounters/:encounterId/vitals
 router.get('/', async (req, res, next) => {
   try {
     const encounterId = req.params.encounterId;
-    const result = await query(
-      `SELECT * FROM vitals WHERE "encounterId" = $1 ORDER BY "recordedAt" ASC`,
-      [encounterId],
-    );
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const result = isSuperAdmin
+      ? await query(`SELECT * FROM vitals WHERE "encounterId" = $1 ORDER BY "recordedAt" ASC`, [encounterId])
+      : await query(
+          `SELECT v.* FROM vitals v
+           JOIN encounters e ON e.id = v."encounterId"
+           JOIN patients p ON p.id = e."patientId"
+           WHERE v."encounterId" = $1
+           AND p."hospitalId" = $2
+           ORDER BY v."recordedAt" ASC`,
+          [encounterId, req.user.hospitalId],
+        );
     return res.status(200).json({ data: result.rows });
   } catch (err) {
     return next(err);
@@ -69,6 +89,11 @@ router.post('/', requireRole('NURSE'), async (req, res, next) => {
         code: 'NOT_FOUND',
         statusCode: 404,
       });
+    }
+
+    const owns = await verifyHospitalOwnership(encounterId, req.user.hospitalId);
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
     }
 
     const inserted = await query(

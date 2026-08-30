@@ -98,8 +98,8 @@ export default function PatientDetail({ encounterId, onAssessmentComplete }) {
       await triggerAssessment(encounterId)
       await refreshPrediction()
       onAssessmentComplete?.()
-    } catch {
-      setError('AI assessment failed. Please try again.')
+    } catch (err) {
+      setError(err.response?.data?.error || 'AI assessment failed. Please try again.')
     } finally {
       setAssessing(false)
     }

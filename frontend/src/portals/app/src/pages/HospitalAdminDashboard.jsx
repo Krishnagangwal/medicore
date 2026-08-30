@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { UserPlusIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../context/AuthContext.jsx'
 import { getMyStaff, inviteStaff, deactivateStaff } from '../services/api.js'
 
@@ -121,74 +122,93 @@ function InviteStaffForm() {
   }
 
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg mx-auto">
       {result && (
-        <div className="mb-5 rounded-lg bg-green-50 border border-green-200 p-4">
-          <p className="font-semibold text-green-800 mb-2">Staff invited successfully</p>
+        <div className="mb-5 rounded-2xl bg-green-50 border border-green-200 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <CheckCircleIcon className="w-5 h-5 text-green-600 shrink-0" />
+            <p className="font-semibold text-green-800">Staff invited successfully</p>
+          </div>
           <p className="text-sm text-green-700 mb-2">Temporary password:</p>
           <CopyableCode value={result.tempPassword} />
-          <p className="text-sm text-green-700 mt-2">An email has been sent to {result.email}</p>
+          <p className="text-sm text-green-700 mt-3">An email has been sent to {result.email}</p>
         </div>
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">
+        <div className="mb-5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm px-4 py-3">
           {error}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm p-6 space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-          <input
-            type="text"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
+      <div className="bg-white rounded-2xl shadow-sm p-8">
+        <div className="flex flex-col items-center text-center mb-6">
+          <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+            <UserPlusIcon className="w-6 h-6 text-primary" />
+          </div>
+          <h2 className="font-bold text-lg text-gray-900">Invite New Staff</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            They'll receive a login and a temporary password by email.
+          </p>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-white"
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Full Name</label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+              placeholder="e.g. Priya Sharma"
+              className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="name@hospital.com"
+              className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Role</label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
+              >
+                <option value="NURSE">Nurse</option>
+                <option value="DOCTOR">Doctor</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Ward <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={ward}
+                onChange={(e) => setWard(e.target.value)}
+                placeholder="e.g. ICU-B"
+                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-primary text-white font-semibold rounded-xl py-3 hover:bg-primary/90 transition disabled:opacity-60 mt-2"
           >
-            <option value="NURSE">Nurse</option>
-            <option value="DOCTOR">Doctor</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Ward <span className="text-gray-400">(optional)</span>
-          </label>
-          <input
-            type="text"
-            value={ward}
-            onChange={(e) => setWard(e.target.value)}
-            placeholder="e.g. ICU-B"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-primary text-white font-semibold rounded-lg py-2.5 hover:bg-primary/90 transition disabled:opacity-60"
-        >
-          {loading ? 'Inviting...' : 'Invite Staff'}
-        </button>
-      </form>
+            {loading ? 'Inviting...' : 'Invite Staff'}
+          </button>
+        </form>
+      </div>
     </div>
   )
 }

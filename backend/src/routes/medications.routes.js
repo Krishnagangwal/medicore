@@ -10,14 +10,34 @@ const { signServiceToken } = require('../utils/jwt');
 const router = express.Router({ mergeParams: true });
 router.use(authenticate);
 
+// Duplicated in each route file that needs it, per this session's task.
+async function verifyHospitalOwnership(encounterId, hospitalId) {
+  if (!hospitalId) return true;
+  const result = await query(
+    `SELECT e.id FROM encounters e
+     JOIN patients p ON p.id = e."patientId"
+     WHERE e.id = $1 AND p."hospitalId" = $2`,
+    [encounterId, hospitalId],
+  );
+  return result.rows.length > 0;
+}
+
 // GET /api/encounters/:encounterId/medications
 router.get('/', async (req, res, next) => {
   try {
     const encounterId = req.params.encounterId;
-    const result = await query(
-      `SELECT * FROM medications WHERE "encounterId" = $1 ORDER BY "createdAt" DESC`,
-      [encounterId],
-    );
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const result = isSuperAdmin
+      ? await query(`SELECT * FROM medications WHERE "encounterId" = $1 ORDER BY "createdAt" DESC`, [encounterId])
+      : await query(
+          `SELECT m.* FROM medications m
+           JOIN encounters e ON e.id = m."encounterId"
+           JOIN patients p ON p.id = e."patientId"
+           WHERE m."encounterId" = $1
+           AND p."hospitalId" = $2
+           ORDER BY m."createdAt" DESC`,
+          [encounterId, req.user.hospitalId],
+        );
     return res.status(200).json({ data: result.rows });
   } catch (err) {
     return next(err);
@@ -48,6 +68,11 @@ router.post('/', requireRole('DOCTOR'), async (req, res, next) => {
         code: 'NOT_FOUND',
         statusCode: 404,
       });
+    }
+
+    const owns = await verifyHospitalOwnership(encounterId, req.user.hospitalId);
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
     }
 
     const inserted = await query(
@@ -119,6 +144,23 @@ router.post('/', requireRole('DOCTOR'), async (req, res, next) => {
 // PATCH /api/medications/:id/discontinue
 router.patch('/:id/discontinue', requireRole('DOCTOR'), async (req, res, next) => {
   try {
+    // This route only has the medication id, not an encounterId param, so
+    // look up which encounter it belongs to before the ownership check.
+    const medResult = await query('SELECT "encounterId" FROM medications WHERE id = $1', [req.params.id]);
+    const medication = medResult.rows[0];
+    if (!medication) {
+      return res.status(404).json({
+        error: 'Medication not found',
+        code: 'NOT_FOUND',
+        statusCode: 404,
+      });
+    }
+
+    const owns = await verifyHospitalOwnership(medication.encounterId, req.user.hospitalId);
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
+    }
+
     const result = await query(
       `UPDATE medications SET status = 'DISCONTINUED' WHERE id = $1 RETURNING *`,
       [req.params.id],

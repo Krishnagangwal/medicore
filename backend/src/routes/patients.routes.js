@@ -16,9 +16,15 @@ const UPDATABLE_FIELDS = [
 ];
 
 // GET /api/patients
-router.get('/', requireRole('NURSE', 'DOCTOR', 'ADMIN'), async (req, res, next) => {
+// SUPER_ADMIN added to the allowed roles here (wasn't previously) — without
+// it, a platform admin's request never reaches this handler at all, so the
+// "superadmin sees every hospital's patients" requirement couldn't hold.
+router.get('/', requireRole('NURSE', 'DOCTOR', 'ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const result = await query('SELECT * FROM patients ORDER BY "fullName" ASC');
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const result = isSuperAdmin
+      ? await query('SELECT * FROM patients ORDER BY "fullName" ASC')
+      : await query('SELECT * FROM patients WHERE "hospitalId" = $1 ORDER BY "fullName" ASC', [req.user.hospitalId]);
     return res.status(200).json({ data: result.rows });
   } catch (err) {
     return next(err);
@@ -28,6 +34,8 @@ router.get('/', requireRole('NURSE', 'DOCTOR', 'ADMIN'), async (req, res, next) 
 // GET /api/patients/:id
 router.get('/:id', async (req, res, next) => {
   try {
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const params = isSuperAdmin ? [req.params.id] : [req.params.id, req.user.hospitalId];
     const result = await query(
       `SELECT p.*,
          e.id as encounter_id, e.status, e."admittedAt",
@@ -35,8 +43,8 @@ router.get('/:id', async (req, res, next) => {
        FROM patients p
        LEFT JOIN encounters e ON e."patientId" = p.id
          AND e.status = 'ACTIVE'
-       WHERE p.id = $1`,
-      [req.params.id],
+       WHERE p.id = $1 ${isSuperAdmin ? '' : 'AND p."hospitalId" = $2'}`,
+      params,
     );
     const row = result.rows[0];
 
@@ -93,8 +101,8 @@ router.post('/', requireRole('NURSE', 'ADMIN'), async (req, res, next) => {
 
     const result = await query(
       `INSERT INTO patients
-         ("patientCode", "fullName", dob, gender, "bloodType", "contactPhone", "chronicConditions", allergies)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ("patientCode", "fullName", dob, gender, "bloodType", "contactPhone", "chronicConditions", allergies, "hospitalId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         patientCode,
@@ -105,6 +113,7 @@ router.post('/', requireRole('NURSE', 'ADMIN'), async (req, res, next) => {
         contactPhone || null,
         chronicConditions || [],
         JSON.stringify(allergies || []),
+        req.user.hospitalId,
       ],
     );
 
@@ -132,9 +141,11 @@ router.patch('/:id', requireRole('NURSE', 'ADMIN'), async (req, res, next) => {
       field === 'allergies' ? JSON.stringify(req.body[field]) : req.body[field],
     );
 
+    // PATCH is NURSE/ADMIN only (never SUPER_ADMIN — see requireRole above),
+    // so req.user.hospitalId is always a real hospital here, no bypass needed.
     const result = await query(
-      `UPDATE patients SET ${setClause} WHERE id = $${fields.length + 1} RETURNING *`,
-      [...values, req.params.id],
+      `UPDATE patients SET ${setClause} WHERE id = $${fields.length + 1} AND "hospitalId" = $${fields.length + 2} RETURNING *`,
+      [...values, req.params.id, req.user.hospitalId],
     );
 
     if (!result.rows[0]) {

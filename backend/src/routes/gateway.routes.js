@@ -7,6 +7,18 @@ const { signServiceToken } = require('../utils/jwt');
 const router = express.Router();
 router.use(authenticate);
 
+// Duplicated in each route file that needs it, per this session's task.
+async function verifyHospitalOwnership(encounterId, hospitalId) {
+  if (!hospitalId) return true;
+  const result = await query(
+    `SELECT e.id FROM encounters e
+     JOIN patients p ON p.id = e."patientId"
+     WHERE e.id = $1 AND p."hospitalId" = $2`,
+    [encounterId, hospitalId],
+  );
+  return result.rows.length > 0;
+}
+
 // POST /api/gateway/assess
 // Manual trigger: doctor/nurse opens a patient and wants an immediate AI
 // assessment without waiting for the hourly scoring job.
@@ -20,6 +32,11 @@ router.post('/assess', requireRole('DOCTOR', 'NURSE'), async (req, res, next) =>
         code: 'VALIDATION_ERROR',
         statusCode: 400,
       });
+    }
+
+    const owns = await verifyHospitalOwnership(encounterId, req.user.hospitalId);
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
     }
 
     const encResult = await query(
@@ -54,6 +71,14 @@ router.post('/assess', requireRole('DOCTOR', 'NURSE'), async (req, res, next) =>
         resp: v.respiratoryRate,
         iculos: idx + 1,
       }));
+
+    if (vitalsReadings.length < 2) {
+      return res.status(400).json({
+        error: 'At least 2 vitals readings must be logged before running an AI assessment',
+        code: 'INSUFFICIENT_VITALS',
+        statusCode: 400,
+      });
+    }
 
     const medsResult = await query(
       `SELECT "drugName" FROM medications

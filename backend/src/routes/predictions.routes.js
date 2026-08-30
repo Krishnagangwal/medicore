@@ -6,10 +6,30 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router({ mergeParams: true });
 router.use(authenticate);
 
+// Duplicated in each route file that needs it, per this session's task.
+async function verifyHospitalOwnership(encounterId, hospitalId) {
+  if (!hospitalId) return true;
+  const result = await query(
+    `SELECT e.id FROM encounters e
+     JOIN patients p ON p.id = e."patientId"
+     WHERE e.id = $1 AND p."hospitalId" = $2`,
+    [encounterId, hospitalId],
+  );
+  return result.rows.length > 0;
+}
+
 // GET /api/encounters/:encounterId/predictions
 router.get('/', async (req, res, next) => {
   try {
     const encounterId = req.params.encounterId;
+    const owns = await verifyHospitalOwnership(
+      encounterId,
+      req.user.role === 'SUPER_ADMIN' ? null : req.user.hospitalId,
+    );
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
+    }
+
     const result = await query(
       `SELECT * FROM predictions WHERE "encounterId" = $1 ORDER BY "predictedAt" DESC`,
       [encounterId],
@@ -24,6 +44,14 @@ router.get('/', async (req, res, next) => {
 router.get('/latest', async (req, res, next) => {
   try {
     const encounterId = req.params.encounterId;
+    const owns = await verifyHospitalOwnership(
+      encounterId,
+      req.user.role === 'SUPER_ADMIN' ? null : req.user.hospitalId,
+    );
+    if (!owns) {
+      return res.status(403).json({ error: 'Access denied', code: 'HOSPITAL_SCOPE_VIOLATION' });
+    }
+
     const result = await query(
       `SELECT * FROM predictions
        WHERE "encounterId" = $1
