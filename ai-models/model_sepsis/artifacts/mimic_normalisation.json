@@ -1,0 +1,77 @@
+{
+  "HR": {
+    "min": -241395.0,
+    "max": 5113280.0,
+    "median": 85.0
+  },
+  "SBP": {
+    "min": -69.0,
+    "max": 1003110.0,
+    "median": 116.0
+  },
+  "DBP": {
+    "min": -2.0,
+    "max": 114109.0,
+    "median": 63.0
+  },
+  "Temp": {
+    "min": 0.0,
+    "max": 987.4,
+    "median": 37.1
+  },
+  "O2Sat": {
+    "min": -678.0,
+    "max": 9765430.0,
+    "median": 97.0
+  },
+  "Resp": {
+    "min": 0.0,
+    "max": 1177791.0,
+    "median": 19.5
+  },
+  "MAP": {
+    "min": -135.0,
+    "max": 930000.0,
+    "median": 78.0
+  },
+  "Lactate": {
+    "min": 0.0,
+    "max": 29.6,
+    "median": 1.4
+  },
+  "WBC": {
+    "min": 0.0,
+    "max": 572.5,
+    "median": 10.7
+  },
+  "Creatinine": {
+    "min": 0.0,
+    "max": 80.0,
+    "median": 1.0
+  },
+  "Bilirubin_total": {
+    "min": 0.0,
+    "max": 87.2,
+    "median": 0.6
+  },
+  "Platelets": {
+    "min": 5.0,
+    "max": 2009.0,
+    "median": 195.0
+  },
+  "Hemoglobin": {
+    "min": 1.7,
+    "max": 24.6,
+    "median": 9.5
+  },
+  "Sodium": {
+    "min": 67.0,
+    "max": 184.0,
+    "median": 139.0
+  },
+  "Potassium": {
+    "min": 1.0,
+    "max": 26.5,
+    "median": 4.0
+  }
+}

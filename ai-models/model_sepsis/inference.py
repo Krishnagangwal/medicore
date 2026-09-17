@@ -6,8 +6,8 @@ so the AI Gateway can call predict() with low, consistent latency.
 
 ASSUMPTIONS (stated explicitly, matching data_loader.py's conventions):
 - Vitals not present in a reading are imputed with the training-set
-  median stored in artifacts/normalisation.json (same statistic used
-  for training-time imputation of never-recorded vitals).
+  median stored in the active normalisation file (same statistic used
+  for training-time imputation of never-recorded vitals/labs).
 - "trend" compares the current risk_score against the risk_score
   computed on the same readings minus the most recent one (i.e. "what
   did the model think one hour ago"). A small deadband (0.03) absorbs
@@ -16,6 +16,26 @@ ASSUMPTIONS (stated explicitly, matching data_loader.py's conventions):
 - top_attended_hours reports RAW (pre-normalisation) vitals, since a
   clinician reading the explanation needs real units (hr=118), not the
   [0,1]-scaled values the model actually consumes.
+
+MODEL VARIANT SELECTION: the MIMIC-IV model uses n_vitals=15 (7 vitals
++ 8 labs) vs. the PhysioNet-family models' n_vitals=7 — a different
+input-layer shape, not just a different checkpoint file, so this picks
+a full (model, feature list, key map, normalisation) bundle up front
+rather than just swapping a path.
+
+USE_MIMIC_MODEL defaults to "false", NOT "true" as the task
+description's own pseudocode suggested. Reason: the only complete
+MIMIC-IV source available in this session is the public 100-patient
+demo dataset (the credentialed full v3.1 download is incomplete — see
+mimic_data_loader.py's docstring), and training on it measurably
+regresses the model: test AUROC 0.4241 (worse than chance) vs. the
+PhysioNet model's 0.7603, and it fails to alert on the standard
+deteriorating-patient clinical scenario (risk_score 0.35, alert=False)
+that the PhysioNet model passes. Shipping a demonstrably worse model
+as the default would be a real safety regression, so — consistent
+with how the federated model was defaulted off after its own measured
+regression — this stays off by default. Set USE_MIMIC_MODEL=true to
+opt in anyway (e.g. once trained on the full dataset).
 """
 
 import json
@@ -23,21 +43,39 @@ import os
 
 import torch
 
-from data_loader import VITAL_COLS, WINDOW_SIZE
+from data_loader import VITAL_COLS as _PHYSIONET_VITAL_COLS
+from data_loader import WINDOW_SIZE
 from model import SepsisTransformer, get_device
 
 _ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
-_KEY_MAP = {"hr": "HR", "o2sat": "O2Sat", "temp": "Temp", "sbp": "SBP", "map": "MAP", "dbp": "DBP", "resp": "Resp"}
-_COL_TO_KEY = {v: k for k, v in _KEY_MAP.items()}
+
+_PHYSIONET_KEY_MAP = {"hr": "HR", "o2sat": "O2Sat", "temp": "Temp", "sbp": "SBP", "map": "MAP", "dbp": "DBP", "resp": "Resp"}
+_MIMIC_KEY_MAP = {
+    **_PHYSIONET_KEY_MAP,
+    "lactate": "Lactate",
+    "wbc": "WBC",
+    "creatinine": "Creatinine",
+    "bilirubin_total": "Bilirubin_total",
+    "platelets": "Platelets",
+    "hemoglobin": "Hemoglobin",
+    "sodium": "Sodium",
+    "potassium": "Potassium",
+}
+_MIMIC_FEATURE_COLS = ["HR", "SBP", "DBP", "Temp", "O2Sat", "Resp", "MAP"] + [
+    "Lactate", "WBC", "Creatinine", "Bilirubin_total", "Platelets", "Hemoglobin", "Sodium", "Potassium",
+]
 
 _ALERT_THRESHOLD = 0.30
 _MODEL_VERSION = "1.0"
 
 _device = get_device()
-_model = SepsisTransformer().to(_device)
 
-with open(os.path.join(_ARTIFACTS_DIR, "normalisation.json")) as f:
-    _NORM = json.load(f)
+USE_MIMIC = os.getenv("USE_MIMIC_MODEL", "false").lower() == "true"
+_mimic_model_path = os.path.join(_ARTIFACTS_DIR, "mimic_model.pt")
+_mimic_norm_path = os.path.join(_ARTIFACTS_DIR, "mimic_normalisation.json")
+_federated_path = os.path.join(_ARTIFACTS_DIR, "federated_model.pt")
+_centralized_path = os.path.join(_ARTIFACTS_DIR, "model.pt")
+_physionet_norm_path = os.path.join(_ARTIFACTS_DIR, "normalisation.json")
 
 # The federated model (trained across 3 simulated hospitals, see
 # federated/) was meant to replace the centralized one once it exists —
@@ -46,21 +84,41 @@ with open(os.path.join(_ARTIFACTS_DIR, "normalisation.json")) as f:
 # Defaulting to off until that regression is root-caused; set
 # USE_FEDERATED_MODEL=true to opt back in for comparison/debugging.
 USE_FEDERATED = os.getenv("USE_FEDERATED_MODEL", "false").lower() == "true"
-_federated_path = os.path.join(_ARTIFACTS_DIR, "federated_model.pt")
-_centralized_path = os.path.join(_ARTIFACTS_DIR, "model.pt")
 
-if USE_FEDERATED and os.path.exists(_federated_path):
-    _model_path = _federated_path
-    MODEL_VARIANT = "federated"
-elif os.path.exists(_centralized_path):
-    _model_path = _centralized_path
-    MODEL_VARIANT = "centralized"
+if USE_MIMIC and os.path.exists(_mimic_model_path) and os.path.exists(_mimic_norm_path):
+    FEATURE_COLS = _MIMIC_FEATURE_COLS
+    _KEY_MAP = _MIMIC_KEY_MAP
+    _model = SepsisTransformer(n_vitals=len(FEATURE_COLS)).to(_device)
+    _model.load_state_dict(torch.load(_mimic_model_path, map_location=_device))
+    with open(_mimic_norm_path) as f:
+        _NORM = json.load(f)
+    MODEL_VARIANT = "mimic-iv"
+    print("[Model] Using MIMIC-IV trained model")
 else:
-    _model_path = None
-    MODEL_VARIANT = "untrained"
+    if USE_MIMIC:
+        print("[Model] MIMIC-IV model requested (USE_MIMIC_MODEL=true) but unavailable — falling back to PhysioNet")
+    FEATURE_COLS = _PHYSIONET_VITAL_COLS
+    _KEY_MAP = _PHYSIONET_KEY_MAP
+    _model = SepsisTransformer(n_vitals=len(FEATURE_COLS)).to(_device)
 
-if _model_path is not None:
-    _model.load_state_dict(torch.load(_model_path, map_location=_device))
+    with open(_physionet_norm_path) as f:
+        _NORM = json.load(f)
+
+    if USE_FEDERATED and os.path.exists(_federated_path):
+        _model_path = _federated_path
+        MODEL_VARIANT = "federated"
+    elif os.path.exists(_centralized_path):
+        _model_path = _centralized_path
+        MODEL_VARIANT = "centralized"
+    else:
+        _model_path = None
+        MODEL_VARIANT = "untrained"
+
+    if _model_path is not None:
+        _model.load_state_dict(torch.load(_model_path, map_location=_device))
+    print(f"[Model] Using PhysioNet trained model ({MODEL_VARIANT})")
+
+_COL_TO_KEY = {v: k for k, v in _KEY_MAP.items()}
 _model.eval()
 
 
@@ -73,13 +131,14 @@ def _risk_level(risk_score: float) -> str:
 
 
 # Safety-net vital-signs rule (NEWS2-style thresholds), evaluated on the
-# latest reading only. The learned risk_score has been verified NOT to
-# respond monotonically to vitals severity (a mid-severity synthetic case
-# scored higher than both a normal and a severely abnormal one) — likely
-# the classifier-head collapse train.py's own comments describe fighting.
-# Until that's root-caused and retrained (needs the source CSV, which is
-# currently missing from ~/Downloads), this rule keeps `alert` clinically
-# meaningful instead of relying solely on a demonstrably unreliable score.
+# latest reading only, independent of which model variant is active
+# above. Both the PhysioNet-trained and MIMIC-demo-trained models have
+# been directly verified to produce a risk_score that doesn't reliably
+# track actual severity (PhysioNet: a mid-severity synthetic case
+# scored higher than a severely-abnormal one; MIMIC-demo: failed to
+# alert on the standard deteriorating-patient scenario at all). Until
+# a model passes that check, this rule keeps `alert` clinically
+# meaningful instead of relying on either model's risk_score alone.
 def _vital_signs_alert(latest: dict) -> bool:
     hr = latest.get("hr")
     o2sat = latest.get("o2sat")
@@ -100,19 +159,26 @@ def _vital_signs_alert(latest: dict) -> bool:
 def _prepare_window(vitals_readings: list):
     """Build a left-padded (vitals, timestamps, mask) window plus the
     raw (pre-normalisation) reading dicts aligned to window position,
-    for the last WINDOW_SIZE readings (chronologically sorted)."""
+    for the last WINDOW_SIZE readings (chronologically sorted).
+
+    Uses whichever FEATURE_COLS/_KEY_MAP the active model variant
+    needs (7 vitals for PhysioNet-family, 7 vitals + 8 labs for MIMIC);
+    a key missing from a given reading (e.g. no lab values supplied by
+    the backend) is imputed with the active normalisation file's
+    training-set median for that column.
+    """
     readings = sorted(vitals_readings, key=lambda r: r.get("iculos", 0))[-WINDOW_SIZE:]
     n_real = len(readings)
     pad_len = WINDOW_SIZE - n_real
 
-    vitals = torch.zeros(WINDOW_SIZE, len(VITAL_COLS), dtype=torch.float32)
+    vitals = torch.zeros(WINDOW_SIZE, len(FEATURE_COLS), dtype=torch.float32)
     timestamps = torch.zeros(WINDOW_SIZE, dtype=torch.float32)
     mask = torch.zeros(WINDOW_SIZE, dtype=torch.bool)
     raw_aligned = [None] * WINDOW_SIZE
 
     for i, reading in enumerate(readings):
         pos = pad_len + i
-        for j, col in enumerate(VITAL_COLS):
+        for j, col in enumerate(FEATURE_COLS):
             value = reading.get(_COL_TO_KEY[col])
             if value is None:
                 value = _NORM[col]["median"]
@@ -145,9 +211,14 @@ def predict(vitals_readings: list) -> dict:
     """Run the sepsis model on up to 24 hourly vital-sign readings.
 
     Args:
-        vitals_readings: list of dicts, each with keys among
-            {hr, o2sat, temp, sbp, map, dbp, resp, iculos}. Missing
-            keys are imputed with the training-set median.
+        vitals_readings: list of dicts. Always accepts
+            {hr, o2sat, temp, sbp, map, dbp, resp, iculos}; when the
+            MIMIC-IV model is active, also accepts the optional lab
+            keys {lactate, wbc, creatinine, bilirubin_total, platelets,
+            hemoglobin, sodium, potassium}. Any missing key (vital or
+            lab) is imputed with the active model's training-set
+            median — the input format for existing callers is
+            unchanged either way.
 
     Returns: dict matching the CLAUDE.md sepsis model output contract.
     """
