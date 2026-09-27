@@ -48,3 +48,7 @@ frontend/.vite/
 # Prisma generated
 backend/node_modules/
 ai-gateway.zip
+
+# Raw MIMIC-IV / PhysioNet downloads — multi-GB, never commit
+physionet.org/
+physionet/

@@ -26,7 +26,8 @@ MediCore is an end to end clinical decision support platform that deploys AI at 
 | Federated learning | Not included | Flower simulation across 3 hospitals |
 | Alert delivery | Nurse checks iPad periodically | Socket.io real-time push |
 | SOFA score | Manual (15 min) | Auto-computed from vitals |
-| Roles served | Nurse only | Nurse + Doctor |
+| Roles served | Nurse only | Nurse + Doctor + Hospital Admin + Platform (Super) Admin |
+| Tenancy | Single hospital | Multi-tenant — hospitals request access, platform admin approves |
 
 ---
 
@@ -47,14 +48,22 @@ Inspired by and compared against:
 ┌─────────────────────────────────────────────────────────────┐
 │                    MediCore Platform                         │
 ├──────────────┬──────────────────────────────────────────────┤
+│  Landing +   │  React app → multi-step login (hospital/name  │
+│  Auth        │  dropdown for staff, email+password for admins)│
+├──────────────┼──────────────────────────────────────────────┤
 │  Nurse       │  React Portal → Socket.io real-time alerts   │
 │  Station     │  Risk queue · Vitals logging · Treatment list │
 ├──────────────┼──────────────────────────────────────────────┤
 │  Doctor      │  React Portal → Unified AI dashboard          │
 │  Portal      │  Attention heatmap · SOFA trend · Drug alerts │
+├──────────────┼──────────────────────────────────────────────┤
+│  Hospital /  │  Approve/reject hospitals · invite & manage   │
+│  Platform    │  staff · multi-tenant hospital management     │
+│  Admin       │                                                │
 ├──────────────┴──────────────────────────────────────────────┤
-│              Node.js Backend (Express + Prisma)              │
-│   REST APIs · Socket.io server · Hourly scoring cron job    │
+│              Node.js Backend (Express + node-postgres)       │
+│   REST APIs · Socket.io server (/nurse /doctor /admin) ·     │
+│   Hourly scoring cron job · Gmail SMTP for invites/approvals │
 ├─────────────────────────────────────────────────────────────┤
 │               FastAPI AI Gateway (port 8000)                 │
 │     asyncio.gather parallel dispatch · 10s timeout          │
@@ -66,7 +75,7 @@ Inspired by and compared against:
 │  Sepsis + SOFA       │  CatBoost + RDKit                     │
 │  Attention weights   │  Morgan fingerprints                  │
 ├──────────────────────┴──────────────────────────────────────┤
-│         PostgreSQL (Supabase) · Cloudinary                   │
+│                       PostgreSQL                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,20 +116,21 @@ A modern deep learning architecture designed for irregular clinical time series.
 }
 ```
 
-**Results:**
+**Results (PhysioNet 2019 — the default, currently-served model):**
 - Validation AUROC: **0.7777**
 - Test AUROC: **0.7603**
 - Dataset: PhysioNet 2019 Sepsis Challenge (40,000 ICU patients, 1.55M rows)
 - Patient-level split: 0 overlap between train/test sets verified
 - Parameters: 553,314
 
-**Federated Learning:**
-Trained using [Flower](https://flower.dev) across 3 simulated hospital partitions:
-- Hospital 0: 40% of patients (large academic)
-- Hospital 1: 35% (mid-size)
-- Hospital 2: 25% (community)
+**MIMIC-IV retrain (opt-in, `USE_MIMIC_MODEL=true`):**
+Retrained on the full credentialed MIMIC-IV v3.1 dataset (364,627 patients, 94,458 adult ICU stays — not the 100-patient public demo) with 15 features (7 vitals + 8 labs) instead of PhysioNet's 7.
+- Test AUROC: **0.7955** on 13,073 held-out patients — beats the PhysioNet baseline
+- Served off by default for now: the saved checkpoint is from epoch 1 (early-stopped once validation AUROC drifted down over the following 10 epochs), so it's real but under-trained. Set `USE_MIMIC_MODEL=true` to try it; falls back to the PhysioNet model automatically if the MIMIC artifacts aren't present.
 
-Each hospital trains locally. Only model weights are shared — no patient data ever leaves the simulated hospital. This addresses the core privacy limitation of the original Sepsis Watch which required centralizing all patient data at Duke.
+**Federated Learning:**
+Implemented using [Flower](https://flower.dev) across 3 simulated hospital partitions (40% / 35% / 25% of patients, large academic → community mix). Each hospital trains locally; only model weights are shared, never patient data — addressing the core privacy limitation of the original Sepsis Watch, which required centralizing all patient data at Duke.
+Currently **disabled by default** (`USE_FEDERATED_MODEL=true` to opt in) — an earlier evaluation measured a real regression versus the centralized model that hasn't been root-caused yet, so the platform ships the better-understood model until that's resolved.
 
 ---
 
@@ -132,7 +142,9 @@ Antibiotic safety checking for sepsis treatment protocols.
 
 **Severity classes:** None → Minor → Moderate → Major → Contraindicated
 
-**Clinical focus:** Sepsis antibiotic combinations with known toxicity risks (e.g. Vancomycin + Piperacillin-Tazobactam → nephrotoxicity).
+**Clinical focus:** Sepsis antibiotic combinations with known toxicity risks (e.g. Fentanyl + Sevoflurane → moderate, monitor for adverse effects).
+
+**Honesty over false negatives:** the reference dataset covers 615 drugs — a pair where either drug falls outside that vocabulary (e.g. Vancomycin, Piperacillin-Tazobactam — both absent from the current training data) is reported as `"unknown"` with a manual-review recommendation, rather than silently scoring it as safe. An earlier version of this pipeline ran the model on those pairs anyway, which reliably (and misleadingly) classified them as "no interaction."
 
 ---
 
@@ -152,51 +164,66 @@ FastAPI orchestrator that coordinates both models.
 ```
 medicore/
 ├── ai-models/
-│   ├── model_sepsis/              # Time2Vec Transformer
-│   │   ├── data_loader.py         # PhysioNet preprocessing pipeline
-│   │   ├── model.py               # Time2Vec + Transformer + dual heads
-│   │   ├── train.py               # Multi-task training loop
-│   │   ├── inference.py           # Real-time prediction + attention
-│   │   ├── endpoint.py            # FastAPI on port 8001
-│   │   ├── federated/             # Flower federated learning
-│   │   │   ├── fl_partition.py    # 3 hospital partitions
-│   │   │   ├── fl_client.py       # Flower NumPy client
-│   │   │   ├── fl_server.py       # FedAvg strategy
-│   │   │   ├── fl_train.py        # Simulation entry point
-│   │   │   └── fl_test.py         # Federated evaluation
+│   ├── model_sepsis/                  # Time2Vec Transformer
+│   │   ├── data_loader.py             # PhysioNet preprocessing pipeline
+│   │   ├── mimic_data_loader.py       # MIMIC-IV preprocessing pipeline
+│   │   ├── model.py                   # Time2Vec + Transformer + dual heads
+│   │   ├── train.py                   # PhysioNet training loop
+│   │   ├── train_mimic.py             # MIMIC-IV training loop
+│   │   ├── inference.py               # Real-time prediction + attention
+│   │   ├── endpoint.py / app.py       # FastAPI on port 8001 (app.py = HF Spaces entry point)
+│   │   ├── federated/                 # Flower federated learning (implemented, off by default)
+│   │   │   ├── fl_partition.py        # 3 hospital partitions
+│   │   │   ├── fl_client.py           # Flower NumPy client
+│   │   │   ├── fl_server.py           # FedAvg strategy
+│   │   │   ├── fl_train.py            # Simulation entry point
+│   │   │   └── fl_test.py             # Federated evaluation
 │   │   └── artifacts/
-│   │       ├── model.pt           # Centralized model weights
-│   │       ├── federated_model.pt # Federated model weights
-│   │       └── normalisation.json # Preprocessing statistics
+│   │       ├── model.pt               # PhysioNet-trained weights (served by default)
+│   │       ├── mimic_model.pt         # MIMIC-IV-trained weights (opt-in)
+│   │       ├── federated_model.pt     # Federated model weights (opt-in)
+│   │       ├── normalisation.json     # PhysioNet preprocessing statistics
+│   │       └── mimic_normalisation.json
 │   │
-│   └── model_4_drug_interaction/  # CatBoost drug safety
-│       ├── feature_extraction.py  # RDKit Morgan fingerprints
+│   └── model_4_drug_interaction/      # CatBoost drug safety
+│       ├── feature_extraction.py      # RDKit Morgan fingerprints
 │       ├── train.py
 │       ├── inference.py
-│       ├── graph.py               # NetworkX DDI knowledge graph
-│       └── endpoint.py            # FastAPI on port 8004
+│       ├── graph.py                   # NetworkX DDI knowledge graph
+│       └── endpoint.py / app.py       # FastAPI on port 8004
 │
-├── ai-gateway/                    # FastAPI orchestrator (port 8000)
-│   ├── main.py
-│   ├── orchestrator.py            # asyncio.gather parallel dispatch
-│   ├── schemas.py                 # Pydantic request/response models
-│   ├── middleware.py              # JWT verification (python-jose)
-│   ├── alert_generator.py        # Rule-based clinical alert text
+├── ai-gateway/                        # FastAPI orchestrator (port 8000)
+│   ├── main.py / app.py               # app.py = HF Spaces entry point
+│   ├── orchestrator.py                # asyncio.gather parallel dispatch
+│   ├── schemas.py                     # Pydantic request/response models
+│   ├── middleware.py                  # JWT verification (python-jose)
+│   ├── alert_generator.py             # Rule-based clinical alert text (Qwen LLM planned)
 │   └── test_gateway.py
 │
-├── backend/                       # Node.js + Express (in progress)
-│   ├── prisma/schema.prisma       # PostgreSQL schema
+├── backend/                           # Node.js + Express
+│   ├── db/
+│   │   ├── schema.sql                 # PostgreSQL schema (plain SQL, no ORM)
+│   │   └── migrate.js                 # Applies schema.sql
 │   ├── src/
-│   │   ├── routes/                # REST API endpoints
-│   │   ├── socket/                # Socket.io namespaces + events
-│   │   ├── jobs/                  # Hourly sepsis scoring cron job
-│   │   └── services/              # AI Gateway client
+│   │   ├── routes/                    # REST API (auth, hospitals, hospitalAdmin, patients,
+│   │   │                              #   encounters, vitals, medications, predictions, notifications)
+│   │   ├── sockets/                   # Socket.io namespaces (/nurse /doctor /admin)
+│   │   ├── jobs/scoringJob.js         # Hourly sepsis scoring cron job
+│   │   ├── services/email.service.js  # Gmail SMTP — hospital approval + staff invite emails
+│   │   └── lib/                       # db pool, seed script
 │   └── package.json
 │
-└── frontend/                      # React portals (in progress)
-    └── src/portals/
-        ├── nurse/                 # Nurse Station
-        └── doctor/                # Doctor Portal
+├── frontend/
+│   └── src/portals/
+│       ├── app/                       # Primary unified portal (all roles, all routes below)
+│       │   └── src/
+│       │       ├── pages/             # Landing, Login (multi-step), Request Access,
+│       │       │                      #   Super Admin, Hospital Admin
+│       │       ├── nurse/             # Nurse Station (dashboard, patients)
+│       │       └── doctor/            # Doctor Portal (AI insights, drug alerts)
+│       └── nurse/, doctor/            # Earlier standalone prototypes, superseded by app/
+│
+└── docs/deployment.md                 # Hugging Face Spaces / Vercel / Render deployment guide
 ```
 
 ---
@@ -208,6 +235,35 @@ medicore/
 - Python 3.11+
 - Node.js 20+
 - PyTorch 2.1+ (MPS supported for Apple Silicon)
+- PostgreSQL (local install or a hosted instance — anything `DATABASE_URL` can point at)
+
+### Run the full stack locally
+
+```bash
+# 1. Database
+createdb medicore_backend
+cd backend
+cp .env.example .env   # fill in DATABASE_URL, JWT_SECRET, etc.
+npm install
+npm run db:migrate
+npm run db:seed         # creates a demo hospital + one user per role — see console output for credentials
+npm run dev              # http://localhost:5000 (or PORT from .env)
+
+# 2. AI Gateway + models — see "Run the AI models locally" below, then:
+cd ai-gateway && cp .env.example .env && pip install -r requirements.txt && uvicorn main:app --port 8000
+
+# 3. Frontend (the unified portal — landing, login, nurse, doctor, admin)
+cd frontend/src/portals/app
+npm install --legacy-peer-deps   # see Troubleshooting — a real peer-dep conflict, not optional
+npm run dev                       # http://localhost:3000
+```
+
+### Troubleshooting
+
+- **Backend won't bind to port 5000 (`EADDRINUSE`)** — on macOS, Control Center's AirPlay Receiver squats on port 5000 by default. Either turn it off (System Settings → General → AirDrop & Handoff) or just change `PORT` in `backend/.env` and set `VITE_API_URL`/`VITE_SOCKET_URL` in `frontend/src/portals/app/.env` to match.
+- **`npm install` in the frontend fails with an ERESOLVE peer-dependency error** — `package.json` currently pins a `vite` version ahead of what `@vitejs/plugin-react` declares support for. Use `npm install --legacy-peer-deps` rather than editing the lockfile.
+- **Gmail App Password option isn't visible** even with 2-Step Verification on — Google withholds it from brand-new accounts for roughly 24 hours as an anti-abuse measure. Use an older Gmail account, wait it out, or point `SMTP_HOST`/`SMTP_PORT` at any other SMTP relay (e.g. Brevo's free tier) instead.
+- **A brand-new patient's first vitals entry doesn't produce a risk score** — this is by design, not a bug: the sepsis model needs at least 2 readings to see a trend. The backend silently skips scoring below that (`backend/src/routes/vitals.routes.js`); log a second reading and the score appears.
 
 ### Run the AI models locally
 
@@ -267,9 +323,15 @@ curl -X POST http://localhost:8000/gateway/sepsis-assessment/public \
 
 | Dataset | Used for | Access |
 |---|---|---|
-| PhysioNet 2019 Sepsis Challenge | Sepsis model training | [Open access](https://physionet.org/content/challenge-2019/) |
-| MIMIC-IV | Model retrain (pending credentials) | [PhysioNet credentialing](https://physionet.org/credential-application/) |
+| PhysioNet 2019 Sepsis Challenge | Sepsis model training (default served model) | [Open access](https://physionet.org/content/challenge-2019/) |
+| MIMIC-IV v3.1 | Sepsis model retrain — full credentialed dataset (364,627 patients, 94,458 ICU stays), not the 100-patient public demo | [PhysioNet credentialing](https://physionet.org/credential-application/) |
 | DDIS | Drug interaction training | Open access |
+
+---
+
+## Deployment
+
+Config for deploying each AI service to Hugging Face Spaces (Docker SDK) — `app.py` entry points, `packages.txt`, and pinned `requirements.txt` are already in `ai-gateway/`, `ai-models/model_sepsis/`, and `ai-models/model_4_drug_interaction/`. Full walkthrough, including the frontend (Vercel) and backend (Render), is in [docs/deployment.md](docs/deployment.md).
 
 ---
 
