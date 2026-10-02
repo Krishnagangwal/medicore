@@ -270,17 +270,34 @@ export default function SuperAdminDashboard() {
   }, [fetchRequests, fetchHospitals])
 
   const handleApprove = async (id) => {
-    const { data } = await approveHospital(id)
-    setApprovedPasswords((prev) => ({ ...prev, [id]: data.tempPassword }))
-    addToast('Hospital approved. Admin account created.', 'success')
-    fetchHospitals()
+    try {
+      const { data } = await approveHospital(id)
+      setApprovedPasswords((prev) => ({ ...prev, [id]: data.tempPassword }))
+      addToast('Hospital approved. Admin account created.', 'success')
+      fetchHospitals()
+    } catch (err) {
+      if (err.response?.status === 409) {
+        // Already approved — stale card (e.g. a second tab, or a reload
+        // that raced the first approval). Self-heal instead of leaving a
+        // dead Approve button behind.
+        addToast('This hospital was already approved.', 'default')
+        setRequests((prev) => prev.filter((r) => r.id !== id))
+        fetchHospitals()
+      } else {
+        addToast(err.response?.data?.error || 'Failed to approve hospital.', 'default')
+      }
+    }
   }
 
   const handleReject = async (id, note) => {
-    await rejectHospital(id, note)
-    addToast('Hospital rejected.', 'default')
-    setRequests((prev) => prev.filter((r) => r.id !== id))
-    fetchHospitals()
+    try {
+      await rejectHospital(id, note)
+      addToast('Hospital rejected.', 'default')
+      setRequests((prev) => prev.filter((r) => r.id !== id))
+      fetchHospitals()
+    } catch (err) {
+      addToast(err.response?.data?.error || 'Failed to reject hospital.', 'default')
+    }
   }
 
   const handleDelete = async (id) => {

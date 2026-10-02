@@ -171,8 +171,12 @@ router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN
       [hospital.adminEmail, passwordHash, hospital.adminName, hospitalId]
     )
 
-    // Send approval email
-    await sendHospitalApprovalEmail({
+    // Send approval email — fire-and-forget. sendMail() already catches and
+    // logs its own errors instead of throwing, so this never rejects; the
+    // point of not awaiting it is purely to stop a slow/blocked SMTP
+    // connection (e.g. a host that blocks outbound port 587) from holding
+    // the whole HTTP response hostage for minutes.
+    sendHospitalApprovalEmail({
       to: hospital.adminEmail,
       hospitalName: hospital.name,
       adminName: hospital.adminName,

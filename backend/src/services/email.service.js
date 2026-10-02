@@ -1,38 +1,36 @@
-const nodemailer = require('nodemailer')
+const { Resend } = require('resend')
 
-const SMTP_CONFIGURED = !!(process.env.SMTP_USER && process.env.SMTP_PASS)
+const RESEND_CONFIGURED = !!process.env.RESEND_API_KEY
 
-const transporter = SMTP_CONFIGURED
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      },
-      // Some networks advertise IPv6 but can't actually route it, which
-      // makes Node's "happy eyeballs" DNS resolution pick an unreachable
-      // IPv6 address for smtp.gmail.com and fail with ENETUNREACH. Forcing
-      // IPv4 sidesteps that instead of depending on the network being fixed.
-      family: 4
-    })
-  : null
+const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null
+
+// Resend's shared sandbox sender — works with no setup, but Resend only
+// lets a sandbox sender deliver to the email address your Resend account
+// itself was signed up with. To actually email real hospital admins/staff,
+// verify a domain at resend.com/domains and set RESEND_FROM_EMAIL to an
+// address on it (e.g. noreply@yourdomain.com).
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'MediCore <onboarding@resend.dev>'
 
 async function sendMail(options) {
-  if (!SMTP_CONFIGURED) {
-    console.log('[Email] SMTP not configured — would have sent:')
+  if (!RESEND_CONFIGURED) {
+    console.log('[Email] RESEND_API_KEY not configured — would have sent:')
     console.log(`  To: ${options.to}`)
     console.log(`  Subject: ${options.subject}`)
-    console.log(`  Body preview: ${options.text || '(HTML email)'}`)
+    console.log(`  Body preview: ${options.text}`)
     return
   }
   try {
-    await transporter.sendMail({
-      from: `"MediCore Platform" <${process.env.SMTP_USER}>`,
-      ...options
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: options.to,
+      subject: options.subject,
+      text: options.text
     })
-    console.log(`[Email] Sent to ${options.to}: ${options.subject}`)
+    if (error) {
+      console.error('[Email] Failed to send:', error.message || error)
+      return
+    }
+    console.log(`[Email] Sent to ${options.to}: ${options.subject} (id ${data?.id})`)
   } catch (err) {
     console.error('[Email] Failed to send:', err.message)
     // Never crash the server on email failure

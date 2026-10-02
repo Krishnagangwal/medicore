@@ -84,8 +84,10 @@ router.post('/invite', authenticate, requireRole('ADMIN'), async (req, res) => {
        req.user.hospitalId, ward || null, req.user.sub]
     )
 
-    // Send invite email
-    await sendStaffInviteEmail({
+    // Send invite email — fire-and-forget, see hospitals.routes.js's
+    // approve handler for why (sendMail never throws; this just stops a
+    // slow/blocked SMTP connection from hanging the HTTP response).
+    sendStaffInviteEmail({
       to: email,
       staffName: fullName,
       hospitalName,

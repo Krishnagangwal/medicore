@@ -10,6 +10,16 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+// Render (and most PaaS hosts) sit the app behind a reverse proxy, so every
+// request arrives with an X-Forwarded-For header. Without this, Express
+// doesn't trust it, which breaks express-rate-limit's per-IP tracking and
+// throws a validation warning on every request. `1` = trust exactly one
+// hop (the platform's own proxy) — safe in production where that's always
+// true; left untrusted in dev where there's no proxy in front at all.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(helmet());
 
 // CORS_ORIGIN is a comma-separated list — one entry per deployed portal
