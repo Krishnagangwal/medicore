@@ -12,6 +12,7 @@ const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'MediCore <onboarding@resend.dev>'
 
 async function sendMail(options) {
+  console.log('🔥 SENDMAIL FUNCTION CALLED 🔥')
   console.log('[Email] RESEND configured:', RESEND_CONFIGURED)
   console.log('[Email] From:', FROM_EMAIL)
   console.log('[Email] To:', options.to)
