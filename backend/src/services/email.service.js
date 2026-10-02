@@ -10,7 +10,12 @@ const transporter = SMTP_CONFIGURED
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
-      }
+      },
+      // Some networks advertise IPv6 but can't actually route it, which
+      // makes Node's "happy eyeballs" DNS resolution pick an unreachable
+      // IPv6 address for smtp.gmail.com and fail with ENETUNREACH. Forcing
+      // IPv4 sidesteps that instead of depending on the network being fixed.
+      family: 4
     })
   : null
 
