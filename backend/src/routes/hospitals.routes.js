@@ -130,6 +130,7 @@ router.get('/admin/all', authenticate, requireRole('SUPER_ADMIN'), async (req, r
 // POST /api/hospitals/admin/:hospitalId/approve
 router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
   try {
+    console.log("HIIIIIIIii")
     const { hospitalId } = req.params
 
     // Get hospital
