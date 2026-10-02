@@ -12,11 +12,13 @@ const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'MediCore <onboarding@resend.dev>'
 
 async function sendMail(options) {
+  console.log('[Email] RESEND configured:', RESEND_CONFIGURED)
+  console.log('[Email] From:', FROM_EMAIL)
+  console.log('[Email] To:', options.to)
+  console.log('[Email] Subject:', options.subject)
+
   if (!RESEND_CONFIGURED) {
-    console.log('[Email] RESEND_API_KEY not configured — would have sent:')
-    console.log(`  To: ${options.to}`)
-    console.log(`  Subject: ${options.subject}`)
-    console.log(`  Body preview: ${options.text}`)
+    console.log('[Email] RESEND_API_KEY not configured')
     return
   }
   try {
@@ -68,7 +70,7 @@ async function sendStaffInviteEmail({ to, staffName, hospitalName, tempPassword,
   const resetUrl = `${loginUrl}/reset-password?token=${resetToken}`
   await sendMail({
     to,
-    subject: `MediCore — You have been invited to ${hospitalName}`,
+    subject: `MediCore - You have been invited to ${hospitalName}`,
     text: `
 Hello ${staffName},
 
