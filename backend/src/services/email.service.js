@@ -12,31 +12,41 @@ const resend = RESEND_CONFIGURED ? new Resend(process.env.RESEND_API_KEY) : null
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'MediCore <onboarding@resend.dev>'
 
 async function sendMail(options) {
-  console.log('🔥 SENDMAIL FUNCTION CALLED 🔥')
+  console.log('[Email] =========================')
   console.log('[Email] RESEND configured:', RESEND_CONFIGURED)
   console.log('[Email] From:', FROM_EMAIL)
   console.log('[Email] To:', options.to)
   console.log('[Email] Subject:', options.subject)
 
   if (!RESEND_CONFIGURED) {
-    console.log('[Email] RESEND_API_KEY not configured')
+    console.log('[Email] RESEND_API_KEY NOT configured')
+    console.log('[Email] Would have sent email to:', options.to)
+    console.log('[Email] =========================')
     return
   }
+
   try {
+    console.log('[Email] Calling Resend...')
+
     const { data, error } = await resend.emails.send({
       from: FROM_EMAIL,
       to: options.to,
       subject: options.subject,
       text: options.text
     })
+
     if (error) {
-      console.error('[Email] Failed to send:', error.message || error)
+      console.error('[Email] Resend ERROR:', error)
       return
     }
-    console.log(`[Email] Sent to ${options.to}: ${options.subject} (id ${data?.id})`)
+
+    console.log('[Email] Resend SUCCESS')
+    console.log('[Email] Email ID:', data?.id)
+    console.log('[Email] =========================')
+
   } catch (err) {
-    console.error('[Email] Failed to send:', err.message)
-    // Never crash the server on email failure
+    console.error('[Email] Exception:', err)
+    console.error('[Email] Stack:', err.stack)
   }
 }
 

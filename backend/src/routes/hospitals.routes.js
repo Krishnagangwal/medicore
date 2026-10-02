@@ -116,14 +116,114 @@ router.get('/admin/requests', authenticate, requireRole('SUPER_ADMIN'), async (r
 
 // GET /api/hospitals/admin/all
 // All hospitals with all fields
-router.get('/admin/all', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
+router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
   try {
-    const result = await query(
-      `SELECT * FROM hospitals ORDER BY "createdAt" DESC`
+    console.log('[APPROVE] ===== START =====')
+    console.log('[APPROVE] hospitalId:', req.params.hospitalId)
+    console.log('[APPROVE] user:', req.user)
+
+    const { hospitalId } = req.params
+
+    console.log('[APPROVE] Fetching hospital...')
+
+    const hospitalResult = await query(
+      `SELECT * FROM hospitals WHERE id = $1`,
+      [hospitalId]
     )
-    res.json({ data: result.rows })
+
+    console.log('[APPROVE] Hospital query returned:', hospitalResult.rows.length)
+
+    if (hospitalResult.rows.length === 0) {
+      console.log('[APPROVE] Hospital NOT FOUND')
+      return res.status(404).json({ error: 'Hospital not found' })
+    }
+
+    const hospital = hospitalResult.rows[0]
+
+    console.log('[APPROVE] Hospital:', {
+      id: hospital.id,
+      name: hospital.name,
+      adminEmail: hospital.adminEmail,
+      adminName: hospital.adminName,
+      status: hospital.status
+    })
+
+    if (hospital.status === 'approved') {
+      console.log('[APPROVE] Already approved')
+      return res.status(409).json({ error: 'Hospital already approved' })
+    }
+
+    console.log('[APPROVE] Generating password...')
+
+    const tempPassword = generateTempPassword()
+    const passwordHash = await bcrypt.hash(tempPassword, 12)
+
+    console.log('[APPROVE] Updating hospital status...')
+
+    await query(
+      `UPDATE hospitals
+       SET status = 'approved', "approvedAt" = NOW(), "approvedBy" = $1
+       WHERE id = $2`,
+      [req.user.sub, hospitalId]
+    )
+
+    console.log('[APPROVE] Hospital status updated')
+
+    console.log('[APPROVE] Creating admin user...')
+
+    const adminUserResult = await query(
+      `INSERT INTO users
+       (email, "passwordHash", "fullName", role, "hospitalId", "mustChangePassword")
+       VALUES ($1, $2, $3, 'ADMIN', $4, true)
+       ON CONFLICT (email) DO UPDATE
+       SET "passwordHash" = EXCLUDED."passwordHash",
+           "hospitalId" = EXCLUDED."hospitalId",
+           "mustChangePassword" = true
+       RETURNING id`,
+      [
+        hospital.adminEmail,
+        passwordHash,
+        hospital.adminName,
+        hospitalId
+      ]
+    )
+
+    console.log('[APPROVE] Admin user created:', adminUserResult.rows[0])
+
+    const resetToken = signResetToken({
+      id: adminUserResult.rows[0].id
+    })
+
+    console.log('[APPROVE] Reset token generated')
+    console.log('[APPROVE] Sending email to:', hospital.adminEmail)
+
+    await sendHospitalApprovalEmail({
+      to: hospital.adminEmail,
+      hospitalName: hospital.name,
+      adminName: hospital.adminName,
+      tempPassword,
+      resetToken
+    })
+
+    console.log('[APPROVE] Email function completed')
+    console.log('[APPROVE] ===== SUCCESS =====')
+
+    res.json({
+      message: 'Hospital approved and admin account created',
+      tempPassword,
+      hospital: {
+        ...hospital,
+        status: 'approved'
+      }
+    })
+
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error('[APPROVE] ERROR:', err)
+    console.error('[APPROVE] ERROR STACK:', err.stack)
+
+    res.status(500).json({
+      error: err.message
+    })
   }
 })
 
