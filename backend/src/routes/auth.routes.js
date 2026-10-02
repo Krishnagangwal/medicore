@@ -7,10 +7,16 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 
 const REFRESH_COOKIE_NAME = 'refreshToken';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  secure: IS_PRODUCTION,
+  // 'lax' works in dev because Vite's proxy keeps everything same-origin.
+  // In production the backend (Render) and each portal (Vercel) are on
+  // different domains, so the cookie needs 'none' to survive a cross-site
+  // fetch — which in turn requires `secure: true` (browsers reject
+  // SameSite=None without Secure), already true in production above.
+  sameSite: IS_PRODUCTION ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
   path: '/api/auth',
 };
@@ -214,9 +220,75 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
+// POST /api/auth/reset-password
+// Consumes a set-password link from an approval/invite email (or a future
+// forgot-password email) — token carries { sub: userId, type: 'reset' }.
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        error: 'token and newPassword are required',
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+      });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters',
+        code: 'VALIDATION_ERROR',
+        statusCode: 400,
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyToken(token);
+    } catch {
+      return res.status(401).json({
+        error: 'This link is invalid or has expired. Ask your admin to resend the invite.',
+        code: 'UNAUTHORIZED',
+        statusCode: 401,
+      });
+    }
+    if (decoded.type !== 'reset') {
+      return res.status(401).json({
+        error: 'Invalid reset token',
+        code: 'UNAUTHORIZED',
+        statusCode: 401,
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const result = await query(
+      `UPDATE users SET "passwordHash" = $1, "mustChangePassword" = false
+       WHERE id = $2 AND "isActive" = true
+       RETURNING id`,
+      [passwordHash, decoded.sub],
+    );
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        error: 'Account not found or inactive',
+        code: 'UNAUTHORIZED',
+        statusCode: 401,
+      });
+    }
+
+    return res.status(200).json({ message: 'Password set successfully' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: 'Failed to reset password',
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+    });
+  }
+});
+
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' });
+  res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_OPTIONS.path, sameSite: REFRESH_COOKIE_OPTIONS.sameSite, secure: REFRESH_COOKIE_OPTIONS.secure });
   return res.status(200).json({ message: 'Logged out' });
 });
 

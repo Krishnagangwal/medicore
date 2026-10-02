@@ -4,6 +4,7 @@ const { query, pool } = require('../lib/db')
 const { authenticate, requireRole } = require('../middleware/auth')
 const bcrypt = require('bcrypt')
 const { sendHospitalApprovalEmail } = require('../services/email.service')
+const { signResetToken } = require('../utils/jwt')
 
 function generateTempPassword(length = 10) {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
@@ -158,14 +159,15 @@ router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN
     )
 
     // Create hospital admin user
-    await query(
+    const adminUserResult = await query(
       `INSERT INTO users
        (email, "passwordHash", "fullName", role, "hospitalId", "mustChangePassword")
        VALUES ($1, $2, $3, 'ADMIN', $4, true)
        ON CONFLICT (email) DO UPDATE
        SET "passwordHash" = EXCLUDED."passwordHash",
            "hospitalId" = EXCLUDED."hospitalId",
-           "mustChangePassword" = true`,
+           "mustChangePassword" = true
+       RETURNING id`,
       [hospital.adminEmail, passwordHash, hospital.adminName, hospitalId]
     )
 
@@ -174,7 +176,8 @@ router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN
       to: hospital.adminEmail,
       hospitalName: hospital.name,
       adminName: hospital.adminName,
-      tempPassword
+      tempPassword,
+      resetToken: signResetToken({ id: adminUserResult.rows[0].id })
     })
 
     res.json({

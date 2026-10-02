@@ -90,6 +90,10 @@ export const login = (credentials) => api.post('/api/auth/login', credentials)
 // instead) but left in place — the backend route is still there too.
 export const register = (payload) => api.post('/api/auth/register', payload)
 
+// Consumes the set-password link from an approval/invite email.
+export const resetPassword = (token, newPassword) =>
+  api.post('/api/auth/reset-password', { token, newPassword })
+
 // Public — approved hospitals for the login dropdown.
 export const getHospitals = () => api.get('/api/hospitals')
 

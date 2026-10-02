@@ -4,6 +4,7 @@ const { query } = require('../lib/db')
 const { authenticate, requireRole } = require('../middleware/auth')
 const bcrypt = require('bcrypt')
 const { sendStaffInviteEmail } = require('../services/email.service')
+const { signResetToken } = require('../utils/jwt')
 
 function generateTempPassword(length = 10) {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
@@ -89,7 +90,8 @@ router.post('/invite', authenticate, requireRole('ADMIN'), async (req, res) => {
       staffName: fullName,
       hospitalName,
       tempPassword,
-      role: role.toUpperCase()
+      role: role.toUpperCase(),
+      resetToken: signResetToken({ id: result.rows[0].id })
     })
 
     res.status(201).json({

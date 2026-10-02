@@ -41,6 +41,18 @@ function signRefreshToken(user) {
   });
 }
 
+// Set-password link sent in approval/invite emails (and reused for a future
+// self-service "forgot password" flow). Stateless — no DB row to revoke —
+// so the short TTL is what bounds how long a leaked link stays usable.
+const RESET_TOKEN_TTL = '1h';
+
+function signResetToken(user) {
+  return jwt.sign({ sub: user.id, type: 'reset' }, getSecret(), {
+    issuer: ISSUER,
+    expiresIn: RESET_TOKEN_TTL,
+  });
+}
+
 function verifyToken(token) {
   return jwt.verify(token, getSecret(), { issuer: ISSUER });
 }
@@ -61,4 +73,4 @@ function signServiceToken() {
   );
 }
 
-module.exports = { signAccessToken, signRefreshToken, signServiceToken, verifyToken, ISSUER };
+module.exports = { signAccessToken, signRefreshToken, signResetToken, signServiceToken, verifyToken, ISSUER };

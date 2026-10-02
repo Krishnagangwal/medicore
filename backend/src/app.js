@@ -11,9 +11,29 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const app = express();
 
 app.use(helmet());
+
+// CORS_ORIGIN is a comma-separated list — one entry per deployed portal
+// (app/nurse/doctor each live on their own Vercel URL). `credentials: true`
+// means the Allow-Origin header must echo back a real origin, never a
+// literal '*' (browsers reject credentialed responses against '*'), so this
+// reflects the request's origin only when it's on the allowlist. No
+// CORS_ORIGIN set at all (local dev hitting the backend directly, outside
+// Vite's same-origin proxy) falls back to allowing any origin, matching the
+// previous default.
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: (origin, callback) => {
+      // No Origin header at all = server-to-server / curl / Postman — let it through.
+      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
     credentials: true,
   }),
 );

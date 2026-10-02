@@ -34,8 +34,9 @@ async function sendMail(options) {
   }
 }
 
-async function sendHospitalApprovalEmail({ to, hospitalName, adminName, tempPassword }) {
+async function sendHospitalApprovalEmail({ to, hospitalName, adminName, tempPassword, resetToken }) {
   const loginUrl = process.env.FRONTEND_URL || 'http://localhost:3001'
+  const resetUrl = `${loginUrl}/reset-password?token=${resetToken}`
   await sendMail({
     to,
     subject: `MediCore — ${hospitalName} has been approved`,
@@ -48,6 +49,9 @@ Login at: ${loginUrl}
 Email: ${to}
 Temporary Password: ${tempPassword}
 
+Prefer to set your own password instead? Use this link (valid 1 hour):
+${resetUrl}
+
 As hospital admin you can now invite nurses and doctors.
 Change your password after first login.
 
@@ -56,8 +60,9 @@ Change your password after first login.
   })
 }
 
-async function sendStaffInviteEmail({ to, staffName, hospitalName, tempPassword, role }) {
+async function sendStaffInviteEmail({ to, staffName, hospitalName, tempPassword, role, resetToken }) {
   const loginUrl = process.env.FRONTEND_URL || 'http://localhost:3001'
+  const resetUrl = `${loginUrl}/reset-password?token=${resetToken}`
   await sendMail({
     to,
     subject: `MediCore — You have been invited to ${hospitalName}`,
@@ -69,6 +74,9 @@ You have been added as ${role} at ${hospitalName} on MediCore.
 Login at: ${loginUrl}
 Email: ${to}
 Temporary Password: ${tempPassword}
+
+Prefer to set your own password instead? Use this link (valid 1 hour):
+${resetUrl}
 
 — MediCore Team
     `.trim()

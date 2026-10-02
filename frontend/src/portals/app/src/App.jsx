@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext.jsx'
 import LandingPage from './pages/LandingPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RequestPage from './pages/RequestPage.jsx'
+import ResetPasswordPage from './pages/ResetPasswordPage.jsx'
 import NurseDashboardPage from './nurse/pages/DashboardPage.jsx'
 import NursePatientsPage from './nurse/pages/PatientsPage.jsx'
 import DoctorMainPage from './doctor/pages/MainPage.jsx'
@@ -45,6 +46,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/request" element={<RequestPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       <Route
         path="/nurse/dashboard"
