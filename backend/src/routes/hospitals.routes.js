@@ -116,6 +116,18 @@ router.get('/admin/requests', authenticate, requireRole('SUPER_ADMIN'), async (r
 
 // GET /api/hospitals/admin/all
 // All hospitals with all fields
+router.get('/admin/all', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM hospitals ORDER BY "createdAt" DESC`
+    )
+    res.json({ data: result.rows })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/hospitals/admin/:hospitalId/approve
 router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
   try {
     console.log('[APPROVE] ===== START =====')
@@ -197,7 +209,10 @@ router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN
     console.log('[APPROVE] Reset token generated')
     console.log('[APPROVE] Sending email to:', hospital.adminEmail)
 
-    await sendHospitalApprovalEmail({
+    // Fire-and-forget — sendMail() catches and logs its own errors instead
+    // of throwing, so not awaiting it just stops a slow/down email provider
+    // from holding the HTTP response hostage.
+    sendHospitalApprovalEmail({
       to: hospital.adminEmail,
       hospitalName: hospital.name,
       adminName: hospital.adminName,
@@ -224,74 +239,6 @@ router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN
     res.status(500).json({
       error: err.message
     })
-  }
-})
-
-// POST /api/hospitals/admin/:hospitalId/approve
-router.post('/admin/:hospitalId/approve', authenticate, requireRole('SUPER_ADMIN'), async (req, res) => {
-  try {
-    console.log("HIIIIIIIii")
-    const { hospitalId } = req.params
-
-    // Get hospital
-    const hospitalResult = await query(
-      `SELECT * FROM hospitals WHERE id = $1`,
-      [hospitalId]
-    )
-    if (hospitalResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Hospital not found' })
-    }
-    const hospital = hospitalResult.rows[0]
-
-    if (hospital.status === 'approved') {
-      return res.status(409).json({ error: 'Hospital already approved' })
-    }
-
-    // Generate temp password
-    const tempPassword = generateTempPassword()
-    const passwordHash = await bcrypt.hash(tempPassword, 12)
-
-    // Update hospital status
-    await query(
-      `UPDATE hospitals
-       SET status = 'approved', "approvedAt" = NOW(), "approvedBy" = $1
-       WHERE id = $2`,
-      [req.user.sub, hospitalId]
-    )
-
-    // Create hospital admin user
-    const adminUserResult = await query(
-      `INSERT INTO users
-       (email, "passwordHash", "fullName", role, "hospitalId", "mustChangePassword")
-       VALUES ($1, $2, $3, 'ADMIN', $4, true)
-       ON CONFLICT (email) DO UPDATE
-       SET "passwordHash" = EXCLUDED."passwordHash",
-           "hospitalId" = EXCLUDED."hospitalId",
-           "mustChangePassword" = true
-       RETURNING id`,
-      [hospital.adminEmail, passwordHash, hospital.adminName, hospitalId]
-    )
-
-    // Send approval email — fire-and-forget. sendMail() already catches and
-    // logs its own errors instead of throwing, so this never rejects; the
-    // point of not awaiting it is purely to stop a slow/blocked SMTP
-    // connection (e.g. a host that blocks outbound port 587) from holding
-    // the whole HTTP response hostage for minutes.
-    sendHospitalApprovalEmail({
-      to: hospital.adminEmail,
-      hospitalName: hospital.name,
-      adminName: hospital.adminName,
-      tempPassword,
-      resetToken: signResetToken({ id: adminUserResult.rows[0].id })
-    })
-
-    res.json({
-      message: 'Hospital approved and admin account created',
-      tempPassword,  // Return in response for testing (remove in production)
-      hospital: { ...hospital, status: 'approved' }
-    })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
   }
 })
 
